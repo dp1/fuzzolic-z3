@@ -658,8 +658,8 @@ static cache_t cache;
                 case OP_BADD: {
                     register expr * const * args = ARGS();
                     unsigned n_args = APP(_expr)->get_num_args();
-                    size_t i = 0;
-                    arg1 = 0;
+                    size_t i = 1;
+                    arg1 = EVAL_ARG(args, 0);
                     do {
                         arg2 = EVAL_ARG(args, i);
                         arg1 += arg2;
@@ -683,9 +683,14 @@ static cache_t cache;
                 }
                 case OP_BMUL: {
                     register expr * const * args = ARGS();
+                    unsigned n_args = APP(_expr)->get_num_args();
+                    size_t i = 1;
                     arg1 = EVAL_ARG(args, 0);
-                    arg2 = EVAL_ARG(args, 1);
-                    arg1 = (arg1 * arg2) & MASK(SIZE(_expr));
+                    do {
+                        arg2 = EVAL_ARG(args, i);
+                        arg1 *= arg2;
+                    } while (++i < n_args);
+                    arg1 = arg1 & MASK(SIZE(_expr));
 #if USE_CACHE
                     cache.insert(expr_id, arg1);
 #endif
@@ -695,6 +700,8 @@ static cache_t cache;
                     register expr * const * args = ARGS();
                     arg1 = EVAL_ARG(args, 0);
                     arg2 = EVAL_ARG(args, 1);
+                    if (arg2 == 0)
+                        return MASK(SIZE(_expr)) & (~0UL);
                     OPERATION(arg1, arg2, SIZE(_expr), /, arg1);
 #if USE_CACHE
                     cache.insert(expr_id, arg1);
@@ -705,6 +712,8 @@ static cache_t cache;
                     register expr * const * args = ARGS();
                     arg1 = EVAL_ARG(args, 0);
                     arg2 = EVAL_ARG(args, 1);
+                    if (arg2 == 0)
+                        return MASK(SIZE(_expr)) & (~0UL);
                     arg1 = (arg1 / arg2) & MASK(SIZE(_expr));
 #if USE_CACHE
                     cache.insert(expr_id, arg1);
@@ -715,6 +724,8 @@ static cache_t cache;
                     register expr * const * args = ARGS();
                     arg1 = EVAL_ARG(args, 0);
                     arg2 = EVAL_ARG(args, 1);
+                    if (arg2 == 0)
+                        return MASK(SIZE(_expr)) & (~0UL);
                     OPERATION(arg1, arg2, SIZE(_expr), %, arg1);
 #if USE_CACHE
                     cache.insert(expr_id, arg1);
@@ -725,6 +736,8 @@ static cache_t cache;
                     register expr * const * args = ARGS();
                     arg1 = EVAL_ARG(args, 0);
                     arg2 = EVAL_ARG(args, 1);
+                    if (arg2 == 0)
+                        return MASK(SIZE(_expr)) & (~0UL);
                     arg1 = (arg1 % arg2) & MASK(SIZE(_expr));
 #if USE_CACHE
                     cache.insert(expr_id, arg1);
@@ -821,9 +834,15 @@ static cache_t cache;
                 }
                 case OP_BAND:  {
                     register expr * const * args = ARGS();
+                    unsigned n_args = APP(_expr)->get_num_args();
+                    size_t i = 1;
                     arg1 = EVAL_ARG(args, 0);
-                    arg2 = EVAL_ARG(args, 1);
-                    arg1 = (arg1 & arg2) & MASK(SIZE(_expr));
+                    do {
+                        arg2 = EVAL_ARG(args, i);
+                        arg1 &= arg2;
+                    } while (++i < n_args);
+
+                    arg1 = arg1 & MASK(SIZE(_expr));
 #if USE_CACHE
                     cache.insert(expr_id, arg1);
 #endif
@@ -831,9 +850,15 @@ static cache_t cache;
                 }
                 case OP_BOR: {
                     register expr * const * args = ARGS();
+                    unsigned n_args = APP(_expr)->get_num_args();
+                    size_t i = 1;
                     arg1 = EVAL_ARG(args, 0);
-                    arg2 = EVAL_ARG(args, 1);
-                    arg1 = (arg1 | arg2) & MASK(SIZE(_expr));
+                    do {
+                        arg2 = EVAL_ARG(args, i);
+                        arg1 |= arg2;
+                    } while (++i < n_args);
+
+                    arg1 = arg1 & MASK(SIZE(_expr));
 #if USE_CACHE
                     cache.insert(expr_id, arg1);
 #endif
@@ -849,9 +874,15 @@ static cache_t cache;
                 }
                 case OP_BXOR: {
                     register expr * const * args = ARGS();
+                    unsigned n_args = APP(_expr)->get_num_args();
+                    size_t i = 1;
                     arg1 = EVAL_ARG(args, 0);
-                    arg2 = EVAL_ARG(args, 1);
-                    arg1 = (arg1 ^ arg2) & MASK(SIZE(_expr));
+                    do {
+                        arg2 = EVAL_ARG(args, i);
+                        arg1 ^= arg2;
+                    } while (++i < n_args);
+
+                    arg1 = arg1 & MASK(SIZE(_expr));
 #if USE_CACHE
                     cache.insert(expr_id, arg1);
 #endif
