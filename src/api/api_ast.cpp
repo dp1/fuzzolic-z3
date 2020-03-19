@@ -643,7 +643,7 @@ static cache_t cache;
                             if (res == 0) {
                                 res = MASK(SIZE(APP(f.m_curr))) & (~0UL);
                             } else {
-                                OPERATION(f.m_res, res, MASK(SIZE(APP(f.m_curr))), /, res);
+                                OPERATION(f.m_res, res, SIZE(APP(f.m_curr)), /, res);
                             }
                             break;
                         }
@@ -659,7 +659,7 @@ static cache_t cache;
                             if (res == 0) {
                                 res = MASK(SIZE(APP(f.m_curr))) & (~0UL);
                             } else {
-                                OPERATION(f.m_res, res, MASK(SIZE(APP(f.m_curr))), %, res);
+                                OPERATION(f.m_res, res, SIZE(APP(f.m_curr)), %, res);
                             }
                             break;
                         }
@@ -748,7 +748,7 @@ static cache_t cache;
                             break;
                         }
                         case OP_BASHR: {
-                            OPERATION(f.m_res, res, MASK(SIZE(APP(f.m_curr))), >>, res);
+                            OPERATION(f.m_res, res, SIZE(APP(f.m_curr)), >>, res);
                             break;
                         }
 #if 0
@@ -769,7 +769,7 @@ static cache_t cache;
                             if (res == 0) {
                                 res = MASK(SIZE(APP(f.m_curr))) & (~0UL);
                             } else {
-                                OPERATION(f.m_res, res, MASK(SIZE(APP(f.m_curr))), /, res);
+                                OPERATION(f.m_res, res, SIZE(APP(f.m_curr)), /, res);
                             }
                             break;
                         }
@@ -785,7 +785,7 @@ static cache_t cache;
                             if (res == 0) {
                                 res = MASK(SIZE(APP(f.m_curr))) & (~0UL);
                             } else {
-                                OPERATION(f.m_res, res, MASK(SIZE(APP(f.m_curr))), %, res);
+                                OPERATION(f.m_res, res, SIZE(APP(f.m_curr)), %, res);
                             }
                             break;
                         }
