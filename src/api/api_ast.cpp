@@ -392,8 +392,8 @@ static cache_t cache;
 #define ERROR(M)    do { notify_assertion_violation(__FILE__, __LINE__, #M); exit(1); } while (0);
 #define APP(e)      reinterpret_cast<app*>(e)
 #define MASK(s)     ((2LU << ((s) - 1LU)) - 1LU)
-#define SIZE(e)     (mk_c(c)->m().get_sort(to_expr(e)))->get_parameter(0).get_int()
-#define IS_BOOL(e)  ((mk_c(c)->m().get_sort(to_expr(e)))->get_num_parameters() == 0)
+#define SIZE(e)     (to_expr(e)->get_sort()->get_parameter(0).get_int())
+#define IS_BOOL(e)  (to_expr(e)->get_sort()->get_num_parameters() == 0)
 #define ARGS(e)     (APP(of_expr(e))->get_args())
 #define OP(e)       (to_app(e)->get_decl()->get_info()->get_decl_kind())
 
@@ -557,8 +557,8 @@ static cache_t cache;
 
         // evaluate the query in the model
         Z3_ast  solution;
-        Z3_bool successfulEval =
-            Z3_model_eval(ctx, z3_m, query, Z3_TRUE, &solution);
+        bool successfulEval =
+            Z3_model_eval(ctx, z3_m, query, true, &solution);
         if (!successfulEval) {
             ERROR("Failed to evaluate model");
             return 0;
@@ -566,8 +566,8 @@ static cache_t cache;
 
         Z3_model_dec_ref(ctx, z3_m);
         if (Z3_get_ast_kind(ctx, solution) == Z3_NUMERAL_AST) {
-            Z3_bool successGet = Z3_get_numeral_uint64(ctx, solution, &res);
-            if (successGet != Z3_TRUE) {
+            bool successGet = Z3_get_numeral_uint64(ctx, solution, &res);
+            if (!successGet) {
                 ERROR("z3fuzz_evaluate_expression_z3() failed to get constant");
                 return 0;
             }
