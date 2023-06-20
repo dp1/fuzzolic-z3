@@ -20,6 +20,7 @@ Revision History:
 #include "sat/sat_types.h"
 #include "sat/sat_params.hpp"
 #include "sat/sat_simplifier_params.hpp"
+#include "params/solver_params.hpp"
 
 
 namespace sat {
@@ -31,6 +32,8 @@ namespace sat {
 
     void config::updt_params(params_ref const & _p) {
         sat_params p(_p);
+        solver_params sp(_p);
+
         m_max_memory  = megabytes_to_bytes(p.max_memory());
 
         symbol s = p.restart();
@@ -43,7 +46,7 @@ namespace sat {
         else if (s == symbol("static"))
             m_restart = RS_STATIC;
         else
-            throw sat_param_exception("invalid restart strategy");
+            throw sat_param_exception("invalid restart strategy. Use ema (default), luby, geometric, static");
 
         m_fast_glue_avg = p.restart_emafastglue();
         m_slow_glue_avg = p.restart_emaslowglue();
@@ -60,6 +63,8 @@ namespace sat {
             m_phase = PS_SAT_CACHING;
         else if (s == symbol("random"))
             m_phase = PS_RANDOM;
+        else if (s == symbol("frozen"))
+            m_phase = PS_FROZEN;
         else
             throw sat_param_exception("invalid phase selection strategy: always_false, always_true, basic_caching, caching, random");
 
@@ -76,6 +81,7 @@ namespace sat {
         m_restart_max     = p.restart_max();
         m_propagate_prefetch = p.propagate_prefetch();
         m_inprocess_max   = p.inprocess_max();
+        m_inprocess_out   = p.inprocess_out();
 
         m_random_freq     = p.random_freq();
         m_random_seed     = p.random_seed();
@@ -84,6 +90,7 @@ namespace sat {
         }
         
         m_burst_search    = p.burst_search();
+        m_enable_pre_simplify  = p.enable_pre_simplify();
         
         m_max_conflicts   = p.max_conflicts();
         m_num_threads     = p.threads();
@@ -97,9 +104,20 @@ namespace sat {
         else
             m_local_search_mode = local_search_mode::wsat;
         m_local_search_dbg_flips = p.local_search_dbg_flips();
-        m_unit_walk       = p.unit_walk();
-        m_unit_walk_threads = p.unit_walk_threads();
-        m_binspr            = false; // unsound :-( p.binspr();
+        //m_binspr            = p.binspr();
+        m_binspr            = false;     // prevent adventurous users from trying feature that isn't ready
+        m_anf_simplify      = p.anf();
+        m_anf_delay         = p.anf_delay();
+        m_anf_exlin         = p.anf_exlin();
+        m_cut_simplify      = p.cut();
+        m_cut_delay         = p.cut_delay();
+        m_cut_aig           = p.cut_aig();
+        m_cut_lut           = p.cut_lut();
+        m_cut_xor           = p.cut_xor();
+        m_cut_npn3          = p.cut_npn3();
+        m_cut_dont_cares    = p.cut_dont_cares();
+        m_cut_redundancies  = p.cut_redundancies();
+        m_cut_force         = p.cut_force();
         m_lookahead_simplify = p.lookahead_simplify();
         m_lookahead_double = p.lookahead_double();
         m_lookahead_simplify_bca = p.lookahead_simplify_bca();
@@ -179,7 +197,17 @@ namespace sat {
         m_drat_check_unsat  = p.drat_check_unsat();
         m_drat_check_sat  = p.drat_check_sat();
         m_drat_file       = p.drat_file();
-        m_drat            = (m_drat_check_unsat || m_drat_file != symbol("") || m_drat_check_sat) && p.threads() == 1;
+        m_smt_proof_check = p.smt_proof_check();
+        m_smt_proof_check_rup = p.smt_proof_check_rup();
+        m_drat_disable = p.drat_disable();
+        m_drat            =
+            !m_drat_disable && p.threads() == 1 &&
+            (sp.lemmas2console() ||
+             m_drat_check_unsat ||
+             m_drat_file.is_non_empty_string() ||
+             sp.proof_log().is_non_empty_string() ||
+             m_smt_proof_check ||
+             m_drat_check_sat);
         m_drat_binary     = p.drat_binary();
         m_drat_activity   = p.drat_activity();
         m_dyn_sub_res     = p.dyn_sub_res();
@@ -190,10 +218,8 @@ namespace sat {
             m_branching_heuristic = BH_VSIDS;
         else if (p.branching_heuristic() == symbol("chb")) 
             m_branching_heuristic = BH_CHB;
-        else if (p.branching_heuristic() == symbol("lrb")) 
-            m_branching_heuristic = BH_LRB;
         else 
-            throw sat_param_exception("invalid branching heuristic: accepted heuristics are 'vsids', 'lrb' or 'chb'");
+            throw sat_param_exception("invalid branching heuristic: accepted heuristics are 'vsids' or 'chb'");
 
         m_anti_exploration = p.branching_anti_exploration();
         m_step_size_init = 0.40;
@@ -232,10 +258,11 @@ namespace sat {
             throw sat_param_exception("invalid PB lemma format: 'cardinality' or 'pb' expected");
         
         m_card_solver = p.cardinality_solver();
-        m_xor_solver = p.xor_solver();
+        m_xor_solver = false; // prevent users from playing with this option
 
-        sat_simplifier_params sp(_p);
-        m_elim_vars = sp.elim_vars();
+        sat_simplifier_params ssp(_p);
+        m_elim_vars = ssp.elim_vars();
+
     }
 
     void config::collect_param_descrs(param_descrs & r) {

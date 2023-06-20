@@ -20,10 +20,10 @@ Notes:
 #include "solver/solver_na2as.h"
 #include "tactic/tactic.h"
 #include "ast/rewriter/pb2bv_rewriter.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 #include "ast/ast_pp.h"
 #include "model/model_smt2_pp.h"
-#include "tactic/arith/bound_manager.h"
+#include "ast/simplifiers/bound_manager.h"
 #include "tactic/arith/bv2int_rewriter.h"
 #include "ast/rewriter/expr_safe_replace.h"
 #include "ast/bv_decl_plugin.h"
@@ -82,6 +82,7 @@ public:
         for (func_decl* f : m_bv_fns) result->m_bv_fns.push_back(tr(f));
         for (func_decl* f : m_int_fns) result->m_int_fns.push_back(tr(f));
         for (bound_manager* b : m_bounds) result->m_bounds.push_back(b->translate(dst_m));
+        result->m_flushed = true;
         model_converter_ref mc = external_model_converter();
         if (mc) {
             ast_translation tr(m, dst_m);
@@ -139,8 +140,18 @@ public:
         }
     }
 
+    void check_assumptions(unsigned num_assumptions, expr * const * assumptions) {
+        for (unsigned i = 0; i < num_assumptions; ++i) {
+            expr* arg = assumptions[i];
+            m.is_not(arg, arg);
+            if (!is_uninterp_const(arg))
+                throw default_exception("only propositional assumptions are supported for finite domains " + mk_pp(arg, m));
+        }
+    }
+
     lbool check_sat_core2(unsigned num_assumptions, expr * const * assumptions) override {
         flush_assertions();
+        check_assumptions(num_assumptions, assumptions);
         return m_solver->check_sat_core(num_assumptions, assumptions);
     }
 
@@ -150,6 +161,10 @@ public:
     void set_progress_callback(progress_callback * callback) override { m_solver->set_progress_callback(callback);  }
     void collect_statistics(statistics & st) const override { m_solver->collect_statistics(st); }
     void get_unsat_core(expr_ref_vector & r) override { m_solver->get_unsat_core(r); }
+    void set_phase(expr* e) override { m_solver->set_phase(e); }
+    phase* get_phase() override { return m_solver->get_phase(); }
+    void set_phase(phase* p) override { m_solver->set_phase(p); }
+    void move_to_front(expr* e) override { m_solver->move_to_front(e); }
     void get_model_core(model_ref & mdl) override {
         m_solver->get_model(mdl);
         if (mdl) {
@@ -160,8 +175,8 @@ public:
     void get_levels(ptr_vector<expr> const& vars, unsigned_vector& depth) override {
         m_solver->get_levels(vars, depth);
     }
-    expr_ref_vector get_trail() override {
-        return m_solver->get_trail();
+    expr_ref_vector get_trail(unsigned max_level) override {
+        return m_solver->get_trail(max_level);
     }
 
     model_converter* external_model_converter() const {
@@ -190,11 +205,13 @@ public:
         mc = concat(mc.get(), m_solver->get_model_converter().get());
         return mc;
     }
-    proof * get_proof() override { return m_solver->get_proof(); }
+    proof * get_proof_core() override { return m_solver->get_proof_core(); }
     std::string reason_unknown() const override { return m_solver->reason_unknown(); }
     void set_reason_unknown(char const* msg) override { m_solver->set_reason_unknown(msg); }
     void get_labels(svector<symbol> & r) override { m_solver->get_labels(r); }
     ast_manager& get_manager() const override { return m;  }
+    expr* congruence_next(expr* e) override { return m_solver->congruence_next(e); }
+    expr* congruence_root(expr* e) override { return m_solver->congruence_root(e); }
     expr_ref_vector cube(expr_ref_vector& vars, unsigned backtrack_level) override { flush_assertions(); return m_solver->cube(vars, backtrack_level); }
     lbool find_mutexes(expr_ref_vector const& vars, vector<expr_ref_vector>& mutexes) override { return m_solver->find_mutexes(vars, mutexes); }
     lbool get_consequences_core(expr_ref_vector const& asms, expr_ref_vector const& vars, expr_ref_vector& consequences) override {
@@ -251,7 +268,7 @@ private:
             SASSERT(is_uninterp_const(e));
             func_decl* f = to_app(e)->get_decl();
 
-            if (bm.has_lower(e, lo, s1) && bm.has_upper(e, hi, s2) && lo <= hi && !s1 && !s2) {
+            if (bm.has_lower(e, lo, s1) && bm.has_upper(e, hi, s2) && lo <= hi && !s1 && !s2 && m_arith.is_int(e)) {
                 func_decl* fbv;
                 rational offset;
                 if (!m_int2bv.find(f, fbv)) {
@@ -313,9 +330,8 @@ private:
         if (m_assertions.empty()) return;
         m_flushed = true;
         bound_manager& bm = *m_bounds.back();
-        for (expr* a : m_assertions) {
-            bm(a);
-        }
+        for (expr* a : m_assertions) 
+            bm(a, nullptr, nullptr);        
         TRACE("int2bv", bm.display(tout););
         expr_safe_replace sub(m);
         accumulate_sub(sub);
@@ -328,7 +344,7 @@ private:
             for (expr* a : m_assertions) {
                 sub(a, fml1);
                 m_rewriter(fml1, fml2, proof);
-                if (m.canceled()) {
+                if (!m.inc()) {
                     m_rewriter.reset();
                     return;
                 }
@@ -359,7 +375,6 @@ private:
             return m_assertions.get(idx);
         }
     }
-
 };
 
 solver * mk_bounded_int2bv_solver(ast_manager & m, params_ref const & p, solver* s) {

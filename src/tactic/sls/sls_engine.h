@@ -16,12 +16,11 @@ Author:
 Notes:
 
 --*/
-#ifndef SLS_ENGINE_H_
-#define SLS_ENGINE_H_
+#pragma once
 
 #include "util/stopwatch.h"
 #include "util/lbool.h"
-#include "tactic/model_converter.h"
+#include "ast/converters/model_converter.h"
 #include "tactic/goal.h"
 
 #include "tactic/sls/sls_tracker.h"
@@ -138,4 +137,3 @@ protected:
     unsigned check_restart(unsigned curr_value);
 };
 
-#endif

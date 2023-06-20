@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef OBJ_HASHTABLE_H_
-#define OBJ_HASHTABLE_H_
+#pragma once
 
 #include "util/hash.h"
 #include "util/hashtable.h"
@@ -30,10 +29,9 @@ Revision History:
 */
 template<typename T>
 class obj_hash_entry {
-    T *             m_ptr;
+    T *             m_ptr = nullptr;
 public:
     typedef T * data;
-    obj_hash_entry():m_ptr(nullptr) {}
     unsigned get_hash() const { return m_ptr->hash(); }
     bool is_free() const { return m_ptr == nullptr; }
     bool is_deleted() const { return m_ptr == reinterpret_cast<T *>(1); }
@@ -60,10 +58,10 @@ public:
     struct key_data {
         Key *  m_key;
         Value  m_value;
-        key_data():m_key(nullptr) {
+        key_data():m_key(nullptr), m_value() {
         }
         key_data(Key * k):
-            m_key(k) {
+            m_key(k), m_value() {
         }
         key_data(Key * k, Value const & v):
             m_key(k),
@@ -83,7 +81,6 @@ public:
         key_data m_data;
     public:
         typedef key_data data;
-        obj_map_entry() {}
         unsigned get_hash() const { return m_data.hash(); }
         bool is_free() const { return m_data.m_key == nullptr; }
         bool is_deleted() const { return m_data.m_key == reinterpret_cast<Key *>(1); }
@@ -146,11 +143,11 @@ public:
         m_table.insert(key_data(k, std::move(v)));
     }
     
-    key_data const & insert_if_not_there(Key * k, Value const & v) {
-        return m_table.insert_if_not_there(key_data(k, v));
+    Value& insert_if_not_there(Key * k, Value const & v) {
+        return m_table.insert_if_not_there2(key_data(k, v))->get_data().m_value;
     }
 
-    obj_map_entry * insert_if_not_there2(Key * k, Value const & v) {
+    obj_map_entry * insert_if_not_there3(Key * k, Value const & v) {
         return m_table.insert_if_not_there2(key_data(k, v));
     }
     
@@ -241,5 +238,4 @@ void erase_dealloc_value(obj_map<Key, Value*> & m, Key * k) {
     }
 }
 
-#endif /* OBJ_HASHTABLE_H_ */
 

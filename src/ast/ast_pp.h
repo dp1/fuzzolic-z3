@@ -18,8 +18,7 @@ Revision History:
     2012-11-17 - ast_smt2_pp is the official pretty printer in Z3
 
 --*/
-#ifndef AST_PP_H_
-#define AST_PP_H_
+#pragma once
 
 #include "ast/ast_smt2_pp.h"
 
@@ -31,6 +30,7 @@ struct mk_pp : public mk_ismt2_pp {
         mk_ismt2_pp(t, m, indent, num_vars, var_prefix) {
     }
 };
+
 
 //<! print vector of ASTs
 class mk_pp_vec {
@@ -54,5 +54,20 @@ inline std::ostream& operator<<(std::ostream & out, mk_pp_vec const & pp) {
     return out;
 }
 
-#endif
+
+inline std::string operator+(char const* s, mk_pp const& pp) {
+    std::ostringstream strm;
+    strm << s << pp;
+    return strm.str();
+}
+
+inline std::string operator+(std::string const& s, mk_pp const& pp) {
+    std::ostringstream strm;
+    strm << s << pp;
+    return strm.str();
+}
+
+inline std::string& operator+=(std::string& s, mk_pp const& pp) {
+    return s = s + pp;
+}
 

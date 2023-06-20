@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef THEORY_ARRAY_FULL_H_
-#define THEORY_ARRAY_FULL_H_
+#pragma once
 
 #include "smt/theory_array.h"
 #include "ast/ast_trail.h"
@@ -29,20 +28,21 @@ namespace smt {
             ptr_vector<enode>  m_maps;
             ptr_vector<enode>  m_consts;
             ptr_vector<enode>  m_as_arrays;
+            ptr_vector<enode>  m_lambdas;
             ptr_vector<enode>  m_parent_maps;
-            var_data_full() {}
         };
 
         ptr_vector<var_data_full> m_var_data_full;
 
-        ast2ast_trailmap<sort,app> m_sort2epsilon;
-        obj_pair_map<expr,expr,bool> m_eqs;
-        svector<literal>             m_eqsv;
+        ast2ast_trailmap<sort, app> m_sort2epsilon;
+        ast2ast_trailmap<sort, func_decl> m_sort2diag;
+        obj_pair_map<expr, expr, bool> m_eqs;
         
         static unsigned const m_default_map_fingerprint = UINT_MAX - 112;
         static unsigned const m_default_store_fingerprint = UINT_MAX - 113;
         static unsigned const m_default_const_fingerprint = UINT_MAX - 115;
         static unsigned const m_default_as_array_fingerprint = UINT_MAX - 116;
+        static unsigned const m_default_lambda_fingerprint = UINT_MAX - 117;
 
     protected:
 
@@ -68,6 +68,7 @@ namespace smt {
         void add_map(theory_var v, enode* s);
         void add_parent_map(theory_var v, enode* s);
         void add_as_array(theory_var v, enode* arr);
+        void add_lambda(theory_var v, enode* lam);
 
         void add_parent_select(theory_var v, enode * s) override;
         void add_parent_default(theory_var v);        
@@ -78,10 +79,14 @@ namespace smt {
         bool instantiate_default_store_axiom(enode* store);
         bool instantiate_default_map_axiom(enode* map);
         bool instantiate_default_as_array_axiom(enode* arr);
+        bool instantiate_default_lambda_def_axiom(enode* arr);
         bool instantiate_parent_stores_default(theory_var v);
 
         bool has_large_domain(app* array_term);
-        app* mk_epsilon(sort* s);
+        bool has_unitary_domain(app* array_term);
+        std::pair<app*,func_decl*> mk_epsilon(sort* s);
+        enode_vector m_as_array;
+        bool has_non_beta_as_array();
 
         bool instantiate_select_const_axiom(enode* select, enode* cnst);
         bool instantiate_select_as_array_axiom(enode* select, enode* arr);
@@ -95,7 +100,7 @@ namespace smt {
 
         
     public:
-        theory_array_full(ast_manager & m, theory_array_params & params);
+        theory_array_full(context& ctx);
         ~theory_array_full() override;
 
         theory * mk_fresh(context * new_ctx) override;
@@ -103,15 +108,8 @@ namespace smt {
         void merge_eh(theory_var v1, theory_var v2, theory_var, theory_var) override;
         void display_var(std::ostream & out, theory_var v) const override;
         void collect_statistics(::statistics & st) const override;
-        void init(context* ctx) override {
-            // the parent class is theory_array.
-            // theory::init(ctx); 
-            theory_array::init(ctx); 
-        }
-
     };
 
 };
 
-#endif /* THEORY_ARRAY_H_ */
 

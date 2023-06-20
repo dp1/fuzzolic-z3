@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef THEORY_ARRAY_BASE_H_
-#define THEORY_ARRAY_BASE_H_
+#pragma once
 
 #include "smt/smt_theory.h"
 #include "smt/theory_array_bapa.h"
@@ -30,10 +29,14 @@ namespace smt {
         friend class theory_array_bapa;
     protected:
         bool m_found_unsupported_op;
-
+        unsigned m_array_weak_head;
+        svector<theory_var> m_array_weak_trail;
+        bool has_propagate_up_trail() const { return m_array_weak_head < m_array_weak_trail.size(); }
+        void add_weak_var(theory_var v);
+        virtual void set_prop_upward(theory_var v) {}
         void found_unsupported_op(expr * n);
-        void found_unsupported_op(enode* n) { found_unsupported_op(n->get_owner()); }
-        void found_unsupported_op(theory_var v) { found_unsupported_op(get_enode(v)->get_owner()); }
+        void found_unsupported_op(enode* n) { found_unsupported_op(n->get_expr()); }
+        void found_unsupported_op(theory_var v) { found_unsupported_op(get_enode(v)->get_expr()); }
         
         bool is_store(app const* n) const { return n->is_app_of(get_id(), OP_STORE); }
         bool is_map(app const* n) const { return n->is_app_of(get_id(), OP_ARRAY_MAP); }
@@ -43,22 +46,24 @@ namespace smt {
         bool is_array_ext(app const * n) const { return n->is_app_of(get_id(), OP_ARRAY_EXT); }
         bool is_as_array(app const * n) const { return n->is_app_of(get_id(), OP_AS_ARRAY); }
         bool is_array_sort(sort const* s) const { return s->is_sort_of(get_id(), ARRAY_SORT); }
-        bool is_array_sort(app const* n) const { return is_array_sort(get_manager().get_sort(n)); }
+        bool is_array_sort(app const* n) const { return is_array_sort(n->get_sort()); }
         bool is_set_has_size(app const* n) const { return n->is_app_of(get_id(), OP_SET_HAS_SIZE); }
         bool is_set_card(app const* n) const { return n->is_app_of(get_id(), OP_SET_CARD); }
 
-        bool is_store(enode const * n) const { return is_store(n->get_owner()); }
-        bool is_map(enode const* n) const { return is_map(n->get_owner()); }
-        bool is_select(enode const* n) const { return is_select(n->get_owner()); }
-        bool is_const(enode const* n) const { return is_const(n->get_owner()); }
-        bool is_as_array(enode const * n) const { return is_as_array(n->get_owner()); }
-        bool is_default(enode const* n) const { return is_default(n->get_owner()); }
-        bool is_array_sort(enode const* n) const { return is_array_sort(n->get_owner()); }
-        bool is_set_has_size(enode const* n) const { return is_set_has_size(n->get_owner()); }
-        bool is_set_carde(enode const* n) const { return is_set_card(n->get_owner()); }
-
+        bool is_store(enode const * n) const { return is_store(n->get_expr()); }
+        bool is_map(enode const* n) const { return is_map(n->get_expr()); }
+        bool is_select(enode const* n) const { return is_select(n->get_expr()); }
+        bool is_const(enode const* n) const { return is_const(n->get_expr()); }
+        bool is_as_array(enode const * n) const { return is_as_array(n->get_expr()); }
+        bool is_default(enode const* n) const { return is_default(n->get_expr()); }
+        bool is_array_sort(enode const* n) const { return is_array_sort(n->get_expr()); }
+        bool is_set_has_size(enode const* n) const { return is_set_has_size(n->get_expr()); }
+        bool is_set_carde(enode const* n) const { return is_set_card(n->get_expr()); }
+        bool is_select_arg(enode* r);
 
         app * mk_select(unsigned num_args, expr * const * args);
+        app * mk_select_reduce(unsigned num_args, expr * * args);
+        app * mk_select(expr_ref_vector const& args) { return mk_select(args.size(), args.data()); }
         app * mk_store(unsigned num_args, expr * const * args);
         app * mk_default(expr* a);
 
@@ -138,6 +143,7 @@ namespace smt {
         // 
         // --------------------------------------------------
         bool is_shared(theory_var v) const override;
+        bool is_beta_redex(enode* p, enode* n) const override;
         void collect_shared_vars(sbuffer<theory_var> & result);
         unsigned mk_interface_eqs();
 
@@ -203,11 +209,10 @@ namespace smt {
         model_value_proc * mk_value(enode * n, model_generator & m) override;
         bool include_func_interp(func_decl* f) override;
     public:
-        theory_array_base(ast_manager & m);
+        theory_array_base(context& ctx);
         ~theory_array_base() override { restore_sorts(0); }
     };
 
 };
 
-#endif /* THEORY_ARRAY_BASE_H_ */
 

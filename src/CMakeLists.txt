@@ -36,9 +36,7 @@ endforeach()
 # that has not yet been declared.
 add_subdirectory(util)
 add_subdirectory(math/polynomial)
-add_subdirectory(sat)
-add_subdirectory(nlsat)
-add_subdirectory(util/lp)
+add_subdirectory(math/dd)
 add_subdirectory(math/hilbert)
 add_subdirectory(math/simplex)
 add_subdirectory(math/automata)
@@ -46,31 +44,41 @@ add_subdirectory(math/interval)
 add_subdirectory(math/realclosure)
 add_subdirectory(math/subpaving)
 add_subdirectory(ast)
+add_subdirectory(params)
 add_subdirectory(ast/rewriter)
+add_subdirectory(ast/rewriter/bit_blaster)
 add_subdirectory(ast/normal_forms)
+add_subdirectory(ast/macros)
 add_subdirectory(model)
-add_subdirectory(tactic)
+add_subdirectory(ast/euf)
+add_subdirectory(ast/converters)
 add_subdirectory(ast/substitution)
+add_subdirectory(ast/simplifiers)
+add_subdirectory(tactic)
+add_subdirectory(smt/params)
 add_subdirectory(parsers/util)
 add_subdirectory(math/grobner)
-add_subdirectory(math/euclid)
+add_subdirectory(sat)
+add_subdirectory(nlsat)
 add_subdirectory(tactic/core)
 add_subdirectory(math/subpaving/tactic)
 add_subdirectory(tactic/aig)
-add_subdirectory(solver)
-add_subdirectory(sat/tactic)
 add_subdirectory(tactic/arith)
-add_subdirectory(nlsat/tactic)
-add_subdirectory(ackermannization)
+add_subdirectory(solver)
 add_subdirectory(cmd_context)
 add_subdirectory(cmd_context/extra_cmds)
 add_subdirectory(parsers/smt2)
+add_subdirectory(qe/mbp)
+add_subdirectory(qe/lite)
+add_subdirectory(solver/assertions)
+add_subdirectory(ast/pattern)
+add_subdirectory(math/lp)
+add_subdirectory(sat/smt)
+add_subdirectory(sat/tactic)
+add_subdirectory(nlsat/tactic)
+add_subdirectory(ackermannization)
 add_subdirectory(ast/proofs)
 add_subdirectory(ast/fpa)
-add_subdirectory(ast/macros)
-add_subdirectory(ast/pattern)
-add_subdirectory(ast/rewriter/bit_blaster)
-add_subdirectory(smt/params)
 add_subdirectory(smt/proto_model)
 add_subdirectory(smt)
 add_subdirectory(tactic/bv)
@@ -96,7 +104,6 @@ add_subdirectory(tactic/portfolio)
 add_subdirectory(opt)
 add_subdirectory(api)
 add_subdirectory(api/dll)
-
 ################################################################################
 # libz3
 ################################################################################
@@ -110,7 +117,31 @@ if (Z3_BUILD_LIBZ3_SHARED)
 else()
   set(lib_type "STATIC")
 endif()
+# Enable static msvc runtime.
+if (MSVC AND Z3_BUILD_LIBZ3_MSVC_STATIC)
+    set(CompilerFlags
+        CMAKE_CXX_FLAGS
+        CMAKE_CXX_FLAGS_DEBUG
+        CMAKE_CXX_FLAGS_RELEASE
+        CMAKE_CXX_FLAGS_MINSIZEREL
+        CMAKE_CXX_FLAGS_RELWITHDEBINFO
+        CMAKE_C_FLAGS
+        CMAKE_C_FLAGS_DEBUG
+        CMAKE_C_FLAGS_RELEASE
+        CMAKE_C_FLAGS_MINSIZEREL
+        CMAKE_C_FLAGS_RELWITHDEBINFO
+        )
+    foreach(CompilerFlag ${CompilerFlags})
+        string(REPLACE "/MD" "/MT" ${CompilerFlag} "${${CompilerFlag}}")
+        string(REPLACE "/MDd" "/MTd" ${CompilerFlag} "${${CompilerFlag}}")
+        set(${CompilerFlag} "${${CompilerFlag}}" CACHE STRING "msvc compiler flags" FORCE)
+        message("MSVC flags: ${CompilerFlag}:${${CompilerFlag}}")
+    endforeach()
+endif()
 add_library(libz3 ${lib_type} ${object_files})
+target_include_directories(libz3 INTERFACE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/api>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 set_target_properties(libz3 PROPERTIES
   # VERSION determines the version in the filename of the shared library.
   # SOVERSION determines the value of the DT_SONAME field on ELF platforms.
@@ -196,7 +227,7 @@ if (MSVC)
       ${Z3_GENERATED_FILE_EXTRA_DEPENDENCIES}
       ${Z3_FULL_PATH_API_HEADER_FILES_TO_SCAN}
     COMMENT "Generating \"${dll_module_exports_file}\""
-    ${ADD_CUSTOM_COMMAND_USES_TERMINAL_ARG}
+    USES_TERMINAL
     VERBATIM
   )
   add_custom_target(libz3_extra_depends
@@ -209,12 +240,26 @@ endif()
 ################################################################################
 # Z3 executable
 ################################################################################
-add_subdirectory(shell)
+cmake_dependent_option(Z3_BUILD_EXECUTABLE
+    "Build the z3 executable" ON
+    "CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
+
+if (Z3_BUILD_EXECUTABLE)
+    add_subdirectory(shell)
+endif()
 
 ################################################################################
 # z3-test
 ################################################################################
-add_subdirectory(test)
+
+cmake_dependent_option(Z3_BUILD_TEST_EXECUTABLES
+    "Build test executables" ON
+    "CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR" OFF)
+
+
+if (Z3_BUILD_TEST_EXECUTABLES)
+    add_subdirectory(test)
+endif()
 
 
 ################################################################################
@@ -251,6 +296,18 @@ if (Z3_BUILD_JAVA_BINDINGS)
       "You either need to disable Z3_BUILD_JAVA_BINDINGS or enable Z3_BUILD_LIBZ3_SHARED")
   endif()
   add_subdirectory(api/java)
+endif()
+
+################################################################################
+# Julia bindings
+################################################################################
+option(Z3_BUILD_JULIA_BINDINGS "Build Julia bindings for Z3" OFF)
+if (Z3_BUILD_JULIA_BINDINGS)
+  if (NOT Z3_BUILD_LIBZ3_SHARED)
+    message(FATAL_ERROR "The Julia bindings will not work with a static libz3."
+      "You either need to disable Z3_BUILD_JULIA_BINDINGS or enable Z3_BUILD_LIBZ3_SHARED")
+  endif()
+  add_subdirectory(api/julia)
 endif()
 
 # TODO: Implement support for other bindigns

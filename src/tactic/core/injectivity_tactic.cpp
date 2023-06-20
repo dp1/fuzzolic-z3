@@ -5,18 +5,10 @@ Module Name:
 
   injectivity_tactic.cpp
 
-Abstract:
-
-  Injectivity tactics
-  - Discover axioms of the form `forall x. (= (g (f x)) x`
-    Mark `f` as injective
-  - Rewrite (sub)terms of the form `(= (f x) (f y))` to `(= x y)` whenever `f` is injective.
 
 Author:
 
   Nicolas Braud-Santoni (t-nibrau) 2017-08-10
-
-Notes:
 
 --*/
 #include <algorithm>
@@ -145,7 +137,6 @@ class injectivity_tactic : public tactic {
 
         void operator()(goal_ref const & goal,
                         goal_ref_buffer & result) {
-            SASSERT(goal->is_well_sorted());
             tactic_report report("injectivity", *goal);
             fail_if_unsat_core_generation("injectivity", goal); // TODO: Support UNSAT cores
             fail_if_proof_generation("injectivity", goal);
@@ -165,8 +156,6 @@ class injectivity_tactic : public tactic {
     struct rewriter_eq_cfg : public default_rewriter_cfg {
         ast_manager              & m_manager;
         InjHelper                & inj_map;
-//        expr_ref_vector            m_out;
-//        sort_ref_vector            m_bindings;
 
         ast_manager & m() const { return m_manager; }
 
@@ -177,14 +166,13 @@ class injectivity_tactic : public tactic {
         }
 
         void cleanup_buffers() {
-//            m_out.finalize();
         }
 
         void reset() {
         }
 
         br_status reduce_app(func_decl * f, unsigned num, expr * const * args, expr_ref & result, proof_ref & result_pr) {
-            if(num != 2)
+            if (num != 2)
                 return BR_FAILED;
 
             if (!m().is_eq(f))
@@ -208,7 +196,7 @@ class injectivity_tactic : public tactic {
             if (!inj_map.contains(a->get_decl()))
                 return BR_FAILED;
 
-            SASSERT(m().get_sort(a->get_arg(0)) == m().get_sort(b->get_arg(0)));
+            SASSERT(a->get_arg(0)->get_sort() == b->get_arg(0)->get_sort());
             TRACE("injectivity", tout << "Rewriting (= " << mk_ismt2_pp(args[0], m()) <<
                                               " " << mk_ismt2_pp(args[1], m()) << ")" << std::endl;);
             result = m().mk_eq(a->get_arg(0), b->get_arg(0));
@@ -231,8 +219,6 @@ class injectivity_tactic : public tactic {
     finder *           m_finder;
     rewriter_eq *      m_eq;
     InjHelper *        m_map;
-//    rewriter_inverse * m_inverse;
-
     params_ref         m_params;
     ast_manager &      m_manager;
 
@@ -256,9 +242,11 @@ public:
         dealloc(m_map);
     }
 
+    char const* name() const override { return "injectivity"; }
+
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        m_finder->updt_params(p);
+        m_params.append(p);
+        m_finder->updt_params(m_params);
     }
 
     void collect_param_descrs(param_descrs & r) override {

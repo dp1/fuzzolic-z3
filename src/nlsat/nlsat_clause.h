@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef NLSAT_CLAUSE_H_
-#define NLSAT_CLAUSE_H_
+#pragma once
 
 #include "nlsat/nlsat_types.h"
 #include "util/vector.h"
@@ -46,7 +45,7 @@ namespace nlsat {
         literal * end() { return m_lits + m_size; }
         literal const * begin() const { return m_lits; }
         literal const * end() const { return m_lits + m_size; }
-        literal const * c_ptr() const { return m_lits; }
+        literal const * data() const { return m_lits; }
         void inc_activity() { m_activity++; }
         void set_activity(unsigned v) { m_activity = v; }
         unsigned get_activity() const { return m_activity; }
@@ -60,4 +59,3 @@ namespace nlsat {
 
 };
 
-#endif

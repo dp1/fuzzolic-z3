@@ -18,6 +18,7 @@ Revision History:
 --*/
 
 #include "model/value_factory.h"
+#include "ast/ast_pp.h"
 
 value_factory::value_factory(ast_manager & m, family_id fid):
     m_manager(m), 
@@ -81,7 +82,16 @@ expr * user_sort_factory::get_some_value(sort * s) {
         m_sort2value_set.find(s, set);
         SASSERT(set != 0);
         SASSERT(!set->m_values.empty());
-        return *(set->m_values.begin());
+        random_gen rand(m_manager.get_num_asts());
+        unsigned n = 1;
+        expr* result = nullptr;
+        for (auto v : set->m_values) {
+            if (0 == (rand() % (n++)))
+                result = v;
+            if (n > 10)
+                break;
+        }
+        return result;
     }
     return simple_factory<unsigned>::get_some_value(s);
 }
@@ -108,7 +118,7 @@ expr * user_sort_factory::get_fresh_value(sort * s) {
 }
 
 void user_sort_factory::register_value(expr * n) {
-    SASSERT(!is_finite(m_manager.get_sort(n)));
+    SASSERT(!is_finite(n->get_sort()));
     simple_factory<unsigned>::register_value(n);
 }
 

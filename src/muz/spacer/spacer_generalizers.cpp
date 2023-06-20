@@ -30,7 +30,7 @@ Revision History:
 #include "ast/substitution/matcher.h"
 #include "ast/expr_functors.h"
 #include "smt/smt_solver.h"
-#include "qe/qe_term_graph.h"
+#include "qe/mbp/mbp_term_graph.h"
 
 namespace spacer {
 void lemma_sanity_checker::operator()(lemma_ref &lemma) {
@@ -195,8 +195,10 @@ public:
     void operator()(app* a)
     {
         if (a->get_family_id() == null_family_id && m_au.is_array(a)) {
-            if (m_sort && m_sort != get_sort(a)) { return; }
-            if (!m_sort) { m_sort = get_sort(a); }
+            if (m_sort && m_sort != a->get_sort())
+                return; 
+            if (!m_sort)
+                m_sort = a->get_sort(); 
             m_symbs.insert(a->get_decl());
         }
     }
@@ -208,16 +210,10 @@ public:
 bool lemma_array_eq_generalizer::is_array_eq (ast_manager &m, expr* e) {
 
     expr *e1 = nullptr, *e2 = nullptr;
-    if (m.is_eq(e, e1, e2) && is_app(e1) && is_app(e2)) {
-        app *a1 = to_app(e1);
-        app *a2 = to_app(e2);
-        array_util au(m);
-        if (a1->get_family_id() == null_family_id &&
-            a2->get_family_id() == null_family_id &&
-            au.is_array(a1) && au.is_array(a2))
-            return true;
-    }
-    return false;
+    array_util au(m);
+    return m.is_eq(e, e1, e2) &&
+        is_uninterp(e1) && is_uninterp(e2) &&
+        au.is_array(e1) && au.is_array(e2);
 }
 
 void lemma_array_eq_generalizer::operator() (lemma_ref &lemma)
@@ -309,14 +305,13 @@ void lemma_array_eq_generalizer::operator() (lemma_ref &lemma)
     {TRACE("core_array_eq", tout << "Not-Inductive!\n";);}
 }
 
-void lemma_eq_generalizer::operator() (lemma_ref &lemma)
-{
+void lemma_eq_generalizer::operator() (lemma_ref &lemma) {
     TRACE("core_eq", tout << "Transforming equivalence classes\n";);
 
     if (lemma->get_cube().empty()) return;
 
     ast_manager &m = m_ctx.get_ast_manager();
-    qe::term_graph egraph(m);
+    mbp::term_graph egraph(m);
     egraph.add_lits(lemma->get_cube());
 
     // -- expand the cube with all derived equalities

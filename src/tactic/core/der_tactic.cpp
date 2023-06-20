@@ -34,10 +34,8 @@ class der_tactic : public tactic {
         }
         
         void operator()(goal & g) {
-            SASSERT(g.is_well_sorted());
             bool proofs_enabled = g.proofs_enabled();
             tactic_report report("der", g);
-            TRACE("before_der", g.display(tout););
             expr_ref   new_curr(m());
             proof_ref  new_pr(m());
             unsigned size = g.size();
@@ -53,8 +51,6 @@ class der_tactic : public tactic {
                 g.update(idx, new_curr, new_pr, g.dep(idx));
             }
             g.elim_redundancies();
-            TRACE("after_der", g.display(tout););
-            SASSERT(g.is_well_sorted());
         }
     };
 
@@ -72,6 +68,8 @@ public:
     ~der_tactic() override {
         dealloc(m_imp);
     }
+
+    char const* name() const override { return "der"; }
     
     void operator()(goal_ref const & in, 
                     goal_ref_buffer & result) override {

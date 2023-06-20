@@ -26,8 +26,8 @@ static std::pair<unsigned, bool> space_upto_line_break(ast_manager & m, format *
     decl_kind k = f->get_decl_kind();
     switch(k) {
     case OP_STRING: {
-        size_t len = strlen(f->get_decl()->get_parameter(0).get_symbol().bare_str());
-        return std::make_pair(static_cast<unsigned>(len), false);
+        unsigned len = f->get_decl()->get_parameter(0).get_symbol().display_size();
+        return std::make_pair(len, false);
     }
     case OP_CHOICE:
         return space_upto_line_break(m, to_app(f->get_arg(0)));
@@ -66,7 +66,6 @@ void pp(std::ostream & out, format * f, ast_manager & m, params_ref const & _p) 
     bool     single_line   = p.single_line();
 
     unsigned pos = 0;
-    unsigned ribbon_pos = 0;
     unsigned line = 0;
     unsigned len;
     unsigned i;
@@ -92,7 +91,6 @@ void pp(std::ostream & out, format * f, ast_manager & m, params_ref const & _p) 
                 break;
             }
             pos += len;
-            ribbon_pos += len;
             out << f->get_decl()->get_parameter(0).get_symbol();
             break;
         case OP_INDENT:
@@ -121,7 +119,6 @@ void pp(std::ostream & out, format * f, ast_manager & m, params_ref const & _p) 
                 break;
             }
             pos = indent;
-            ribbon_pos = 0;
             line++;
             if (line < max_num_lines) {
                 out << "\n";

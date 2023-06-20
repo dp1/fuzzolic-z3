@@ -16,11 +16,11 @@ Author:
 Revision History:
 
 --*/
-#ifndef THEORY_DATATYPE_H_
-#define THEORY_DATATYPE_H_
+#pragma once
 
 #include "util/union_find.h"
 #include "ast/array_decl_plugin.h"
+#include "ast/seq_decl_plugin.h"
 #include "ast/datatype_decl_plugin.h"
 #include "model/datatype_factory.h"
 #include "smt/smt_theory.h"
@@ -28,7 +28,6 @@ Revision History:
 
 namespace smt {
     class theory_datatype : public theory {
-        typedef trail_stack<theory_datatype> th_trail_stack;
         typedef union_find<theory_datatype>  th_union_find;
 
         struct var_data {
@@ -45,14 +44,13 @@ namespace smt {
             void reset() { memset(this, 0, sizeof(stats)); }
             stats() { reset(); }
         };
-
         
-        theory_datatype_params &  m_params;
         datatype_util             m_util;
         array_util                m_autil;
+        seq_util                  m_sutil;
         ptr_vector<var_data>      m_var_data;
         th_union_find             m_find;
-        th_trail_stack            m_trail_stack;
+        trail_stack               m_trail_stack;
         datatype_factory *        m_factory;
         stats                     m_stats;
 
@@ -61,10 +59,10 @@ namespace smt {
         bool is_accessor(app * f) const { return m_util.is_accessor(f); }
         bool is_update_field(app * f) const { return m_util.is_update_field(f); }
 
-        bool is_constructor(enode * n) const { return is_constructor(n->get_owner()); }
-        bool is_recognizer(enode * n) const { return is_recognizer(n->get_owner()); }
-        bool is_accessor(enode * n) const { return is_accessor(n->get_owner()); }
-        bool is_update_field(enode * n) const { return m_util.is_update_field(n->get_owner()); }
+        bool is_constructor(enode * n) const { return is_constructor(n->get_expr()); }
+        bool is_recognizer(enode * n) const { return is_recognizer(n->get_expr()); }
+        bool is_accessor(enode * n) const { return is_accessor(n->get_expr()); }
+        bool is_update_field(enode * n) const { return m_util.is_update_field(n->get_expr()); }
 
         void assert_eq_axiom(enode * lhs, expr * rhs, literal antecedent);
         void assert_is_constructor_axiom(enode * n, func_decl * c, literal antecedent);
@@ -83,6 +81,9 @@ namespace smt {
         enode_pair_vector     m_used_eqs; // conflict, if any
         parent_tbl            m_parent; // parent explanation for occurs_check
         svector<stack_entry>  m_stack; // stack for DFS for occurs_check
+        literal_vector        m_lits;
+
+        void clear_mark();
 
         void oc_mark_on_stack(enode * n);
         bool oc_on_stack(enode * n) const { return n->get_root()->is_marked(); }
@@ -91,8 +92,9 @@ namespace smt {
         bool oc_cycle_free(enode * n) const { return n->get_root()->is_marked2(); }
 
         void oc_push_stack(enode * n);
-        ptr_vector<enode> m_array_args;
+        ptr_vector<enode> m_args, m_todo;
         ptr_vector<enode> const& get_array_args(enode* n);
+        ptr_vector<enode> const& get_seq_args(enode* n, enode*& sibling);
 
         // class for managing state of final_check
         class final_check_st {
@@ -128,15 +130,16 @@ namespace smt {
         void reset_eh() override;
         void restart_eh() override { m_util.reset(); }
         bool is_shared(theory_var v) const override;
+        theory_datatype_params const& params() const;
     public:
-        theory_datatype(ast_manager & m, theory_datatype_params & p);
+        theory_datatype(context& ctx);
         ~theory_datatype() override;
         theory * mk_fresh(context * new_ctx) override;
         void display(std::ostream & out) const override;
         void collect_statistics(::statistics & st) const override;
         void init_model(model_generator & m) override;
         model_value_proc * mk_value(enode * n, model_generator & m) override;
-        th_trail_stack & get_trail_stack() { return m_trail_stack; }
+        trail_stack & get_trail_stack() { return m_trail_stack; }
         virtual void merge_eh(theory_var v1, theory_var v2, theory_var, theory_var);
         static void after_merge_eh(theory_var r1, theory_var r2, theory_var v1, theory_var v2) {}
         void unmerge_eh(theory_var v1, theory_var v2);
@@ -147,5 +150,4 @@ namespace smt {
 
 };
 
-#endif /* THEORY_DATATYPE_H_ */
 

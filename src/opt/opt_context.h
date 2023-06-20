@@ -15,13 +15,12 @@ Author:
 Notes:
 
 --*/
-#ifndef OPT_CONTEXT_H_
-#define OPT_CONTEXT_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "ast/arith_decl_plugin.h"
 #include "ast/bv_decl_plugin.h"
-#include "tactic/model_converter.h"
+#include "ast/converters/model_converter.h"
 #include "tactic/tactic.h"
 #include "qe/qsat.h"
 #include "opt/opt_solver.h"
@@ -46,6 +45,7 @@ namespace opt {
 
     class maxsat_context {
     public:        
+        virtual ~maxsat_context() = default;
         virtual generic_model_converter& fm() = 0;   // converter that removes fresh names introduced by simplification.
         virtual bool sat_enabled() const = 0;       // is using th SAT solver core enabled?
         virtual solver& get_solver() = 0;           // retrieve solver object (SAT or SMT solver)
@@ -57,6 +57,8 @@ namespace opt {
         virtual smt::context& smt_context() = 0;    // access SMT context for SMT based MaxSMT solver (wmax requires SMT core)
         virtual unsigned num_objectives() = 0;
         virtual bool verify_model(unsigned id, model* mdl, rational const& v) = 0;
+        virtual rational adjust(unsigned id, rational const& v) = 0;
+        virtual void add_offset(unsigned id, rational const& o) = 0;
         virtual void set_model(model_ref& _m) = 0;
         virtual void model_updated(model* mdl) = 0;
     };
@@ -66,6 +68,14 @@ namespace opt {
        Hard and soft assertions, and objectives are registered with this context.
        It handles combinations of objectives.
     */
+
+    struct on_model_t {
+        void* c;
+        void* m;
+        void* user_context;
+        void* on_model;
+    };
+
 
     class context : 
         public opt_wrapper, 
@@ -85,7 +95,7 @@ namespace opt {
             app_ref     m_term;          // for maximize, minimize term
             expr_ref_vector   m_terms;   // for maxsmt
             vector<rational>  m_weights; // for maxsmt
-            adjust_value  m_adjust_value;
+            adjust_value      m_adjust_value;
             symbol      m_id;            // for maxsmt
             unsigned    m_index;         // for maximize/minimize index
 
@@ -110,6 +120,17 @@ namespace opt {
             {}
         };
 
+      double m_time = 0;      
+      class scoped_time {
+        context& c;
+        timer t;
+      public:
+        scoped_time(context& c):c(c) { c.m_time = 0; }
+        ~scoped_time() { c.m_time = t.get_seconds(); }
+      };
+
+
+
         class scoped_state {
             ast_manager& m;
             arith_util   m_arith;
@@ -133,6 +154,7 @@ namespace opt {
                 m_hard(m),
                 m_asms(m)
             {}
+            unsigned num_scopes() const { return m_hard_lim.size(); }
             void push();
             void pop();
             void add(expr* hard);
@@ -142,7 +164,9 @@ namespace opt {
             unsigned get_index(symbol const& id) { return m_indices[id]; }
         };
 
-        ast_manager&        m;
+        on_model_t          m_on_model_ctx;
+        std::function<void(on_model_t&, model_ref&)> m_on_model_eh;
+        bool                m_calling_on_model = false;
         arith_util          m_arith;
         bv_util             m_bv;
         expr_ref_vector     m_hard_constraints;
@@ -169,10 +193,12 @@ namespace opt {
         func_decl_ref_vector         m_objective_refs;
         expr_ref_vector              m_core;
         tactic_ref                   m_simplify;
-        bool                         m_enable_sat;
-        bool                         m_enable_sls;
-        bool                         m_is_clausal;
-        bool                         m_pp_neat;
+        bool                         m_enable_sat = true;
+        bool                         m_enable_sls = false;
+        bool                         m_is_clausal = false;
+        bool                         m_pp_neat = false;
+        bool                         m_pp_wcnf = false;
+        bool                         m_incremental = false;
         symbol                       m_maxsat_engine;
         symbol                       m_logic;
         svector<symbol>              m_labels;
@@ -199,7 +225,7 @@ namespace opt {
         void get_box_model(model_ref& _m, unsigned index) override;
         void fix_model(model_ref& _m) override;
         void collect_statistics(statistics& stats) const override;
-        proof* get_proof() override { return nullptr; }
+        proof* get_proof_core() override { return nullptr; }
         void get_labels(svector<symbol> & r) override;
         void get_unsat_core(expr_ref_vector & r) override;
         std::string reason_unknown() const override;
@@ -222,7 +248,7 @@ namespace opt {
         void get_lower(unsigned idx, expr_ref_vector& es) { to_exprs(get_lower_as_num(idx), es); }
         void get_upper(unsigned idx, expr_ref_vector& es) { to_exprs(get_upper_as_num(idx), es); }
 
-        std::string to_string() const;
+        std::string to_string();
 
 
         unsigned num_objectives() override { return m_scoped_state.m_objectives.size(); }
@@ -244,6 +270,21 @@ namespace opt {
         bool verify_model(unsigned id, model* mdl, rational const& v) override;
         
         void model_updated(model* mdl) override;
+
+        rational adjust(unsigned id, rational const& v) override;
+
+        void add_offset(unsigned id, rational const& o) override;
+
+        void register_on_model(on_model_t& ctx, std::function<void(on_model_t&, model_ref&)>& on_model) { 
+            m_on_model_ctx = ctx; 
+            m_on_model_eh  = on_model; 
+        }
+      
+        void collect_timer_stats(statistics& st) const {
+	  if (m_time != 0) 
+	    st.update("time", m_time);
+	}
+
 
     private:
         lbool execute(objective const& obj, bool committed, bool scoped);
@@ -286,8 +327,9 @@ namespace opt {
         inf_eps get_upper_as_num(unsigned idx);
 
 
-        struct is_bv;
-        bool probe_bv();
+        struct is_fd;
+        bool probe_fd();
+        bool is_maxsat_query();
 
         struct is_propositional_fn;
         bool is_propositional(expr* e);
@@ -307,7 +349,7 @@ namespace opt {
 
         std::string to_string(bool is_internal, expr_ref_vector const& hard, vector<objective> const& objectives) const;
         std::string to_string_internal() const;
-
+        std::string to_wcnf();
 
         void validate_lex();
         void validate_maxsat(symbol const& id);
@@ -324,8 +366,9 @@ namespace opt {
         // quantifiers
         bool is_qsat_opt();
         lbool run_qsat_opt();
+
+      
     };
 
 }
 
-#endif

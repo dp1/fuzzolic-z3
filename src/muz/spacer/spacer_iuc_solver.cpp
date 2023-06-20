@@ -53,8 +53,7 @@ namespace spacer {
             m_proxies.push_back (res);
             
             // -- add the new proxy to proxy eliminator
-            proof_ref pr(m);
-            pr = m.mk_asserted (m.mk_true ());
+            proof_ref pr(m.mk_rewrite(res, m.mk_true()), m);
             m_elim_proxies_sub.insert (res, m.mk_true (), pr);
             
         }
@@ -122,7 +121,7 @@ namespace spacer {
     lbool iuc_solver::check_sat_cc(const expr_ref_vector &cube,
                                    vector<expr_ref_vector> const & clauses) {
         if (clauses.empty())
-            return check_sat(cube.size(), cube.c_ptr());
+            return check_sat(cube.size(), cube.data());
         
         // -- remove any old assumptions
         m_assumptions.shrink(m_first_assumption);
@@ -245,12 +244,10 @@ namespace spacer {
     }
     
     void iuc_solver::elim_proxies (expr_ref_vector &v) {
-        expr_ref f = mk_and (v);
         scoped_ptr<expr_replacer> rep = mk_expr_simp_replacer (m);
         rep->set_substitution (&m_elim_proxies_sub);
-        (*rep)(f);
-        v.reset();
-        flatten_and(f, v);
+        (*rep)(v);
+        flatten_and(v);
     }
     
     void iuc_solver::get_iuc(expr_ref_vector &core) {
@@ -281,6 +278,9 @@ namespace spacer {
         else {
             // NEW IUC
             proof_ref res(get_proof(), m);
+
+            if (!res)
+                throw default_exception("iuc assumes a proof object");
             
             // -- old hypothesis reducer while the new one is broken
             if (m_old_hyp_reducer) {

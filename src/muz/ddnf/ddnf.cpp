@@ -25,7 +25,8 @@ Revision History:
 #include "muz/base/dl_context.h"
 #include "ast/scoped_proof.h"
 #include "ast/bv_decl_plugin.h"
-#include "muz/rel/tbv.h"
+#include "util/tbv.h"
+#include <iostream>
 
 namespace datalog {
 
@@ -135,7 +136,7 @@ namespace datalog {
         ddnf_node::hash        m_hash;
         ddnf_node::eq          m_eq;
         ddnf_nodes             m_nodes;
-        svector<bool>          m_marked;
+        bool_vector          m_marked;
         stats                  m_stats;
     public:
         ddnf_mgr(unsigned n): m_noderefs(*this), m_internalized(false), m_tbv(n),
@@ -224,9 +225,9 @@ namespace datalog {
         }
 
         void display_statistics(std::ostream& out) const {            
-            std::cout << "Number of insertions:  " << m_stats.m_num_inserts << "\n";
-            std::cout << "Number of comparisons: " << m_stats.m_num_comparisons << "\n";
-            std::cout << "Number of nodes:       " << size() << "\n";
+            out << "Number of insertions:  " << m_stats.m_num_inserts << "\n"
+                   "Number of comparisons: " << m_stats.m_num_comparisons << "\n"
+                   "Number of nodes:       " << size() << "\n";
         }
 
         void display(std::ostream& out) const {            
@@ -338,7 +339,7 @@ namespace datalog {
             }
             ptr_vector<ddnf_node> todo;
             todo.push_back(m_root);
-            svector<bool> done(m_noderefs.size(), false);
+            bool_vector done(m_noderefs.size(), false);
             while (!todo.empty()) {
                 ddnf_node& n = *todo.back();
                 if (done[n.get_id()]) {
@@ -453,10 +454,8 @@ namespace datalog {
         }
 
         void display(std::ostream& out) const {
-            u_map<ddnf_mgr*>::iterator it = m_mgrs.begin(), end = m_mgrs.end();
-            for (; it != end; ++it) {
-                it->m_value->display(out);
-            }
+            for (auto const& kv : m_mgrs)
+                kv.m_value->display(out);
         }
 
     private:
@@ -558,13 +557,9 @@ namespace datalog {
             m_todo.reset();
             m_cache.reset();
             m_expr2tbv.reset();
-            datalog::rule_set::iterator it  = rules.begin();
-            datalog::rule_set::iterator end = rules.end();
-            for (; it != end; ++it) {
-                if (!pre_process_rule(**it)) {
+            for (auto* r : rules) 
+                if (!pre_process_rule(*r)) 
                     return false;
-                }
-            }
             return true;
         }
 
@@ -685,7 +680,7 @@ namespace datalog {
             for (; dit != dend; ++dit) {
                 heads.push_back(dit->m_key);
             }
-            return m_inner_ctx.rel_query(heads.size(), heads.c_ptr());
+            return m_inner_ctx.rel_query(heads.size(), heads.data());
         }
 
         bool compile_rules1(rule_set const& rules, rule_set& new_rules) {
@@ -715,7 +710,7 @@ namespace datalog {
                 compile_expr(r.get_tail(i), tmp);
                 body.push_back(to_app(tmp));
             }
-            rule* r_new = rm.mk(head, body.size(), body.c_ptr(), nullptr, r.name(), false);
+            rule* r_new = rm.mk(head, body.size(), body.data(), nullptr, r.name(), false);
             new_rules.add_rule(r_new);
             IF_VERBOSE(20, r_new->display(m_ctx, verbose_stream()););
             if (old_rules.is_output_predicate(r.get_decl())) {
@@ -729,10 +724,10 @@ namespace datalog {
             func_decl* d = p->get_decl();
             SASSERT(d->get_family_id() == null_family_id);
             for (unsigned i = 0; i < p->get_num_args(); ++i) {
-                domain.push_back(compile_sort(m.get_sort(p->get_arg(i))));
+                domain.push_back(compile_sort(p->get_arg(i)->get_sort()));
             }
             func_decl_ref fn(m);
-            fn = m.mk_func_decl(d->get_name(), domain.size(), domain.c_ptr(), m.mk_bool_sort());
+            fn = m.mk_func_decl(d->get_name(), domain.size(), domain.data(), m.mk_bool_sort());
             m_ctx.register_predicate(fn, false);
             expr_ref_vector args(m);
             expr_ref tmp(m);
@@ -740,7 +735,7 @@ namespace datalog {
                 compile_expr(p->get_arg(i), tmp);
                 args.push_back(tmp);
             }
-            result = m.mk_app(fn, args.size(), args.c_ptr());
+            result = m.mk_app(fn, args.size(), args.data());
         }
 
         void insert_cache(expr* e, expr* r) {
@@ -810,7 +805,7 @@ namespace datalog {
                     compile_expr(a->get_arg(i), tmp);
                     args.push_back(tmp);
                 } 
-                result = m.mk_app(a->get_decl(), args.size(), args.c_ptr());
+                result = m.mk_app(a->get_decl(), args.size(), args.data());
                 insert_cache(e, result);
                 return;
             }
@@ -856,7 +851,7 @@ namespace datalog {
             ddnf_nodes const& ns = m_ddnfs.lookup(num_bits, *t);
             ddnf_nodes::iterator it = ns.begin(), end = ns.end();
             expr_ref_vector eqs(m);
-            sort* s = m.get_sort(w);
+            sort* s = w->get_sort();
             for (; it != end; ++it) {
                 eqs.push_back(m.mk_eq(w, bv.mk_numeral(rational((*it)->get_id()), s)));
             }
@@ -869,7 +864,7 @@ namespace datalog {
                 result = eqs[0].get();
                 break;
             default:
-                result = m.mk_or(eqs.size(), eqs.c_ptr());
+                result = m.mk_or(eqs.size(), eqs.data());
                 break;
             }
         }

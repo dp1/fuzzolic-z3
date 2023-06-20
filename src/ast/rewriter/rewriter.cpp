@@ -18,6 +18,7 @@ Notes:
 --*/
 #include "ast/rewriter/rewriter_def.h"
 #include "ast/ast_ll_pp.h"
+#include "ast/ast_pp.h"
 #include "ast/ast_smt2_pp.h"
 
 void rewriter_core::init_cache_stack() {
@@ -42,6 +43,19 @@ void rewriter_core::del_cache_stack() {
     }
 }
 
+bool rewriter_core::rewrites_from(expr* t, proof* p) {
+    return !p || m().proofs_disabled() || (to_app(m().get_fact(p))->get_arg(0) == t);
+}
+
+bool rewriter_core::rewrites_to(expr* t, proof* p) {
+    CTRACE("rewriter", p && !m().proofs_disabled() && to_app(m().get_fact(p))->get_arg(1) != t, 
+           tout << mk_pp(p, m()) << "\n";
+           tout << mk_pp(t, m()) << "\n";);
+    return !p || m().proofs_disabled() || (to_app(m().get_fact(p))->get_arg(1) == t); 
+}
+
+
+
 void rewriter_core::cache_shifted_result(expr * k, unsigned offset, expr * v) {
 #if 0
     // trace for tracking cache usage
@@ -51,7 +65,7 @@ void rewriter_core::cache_shifted_result(expr * k, unsigned offset, expr * v) {
     
     TRACE("rewriter_cache_result", tout << mk_ismt2_pp(k, m()) << "\n--->\n" << mk_ismt2_pp(v, m()) << "\n";);
 
-    SASSERT(m().get_sort(k) == m().get_sort(v));
+    SASSERT(k->get_sort() == v->get_sort());
 
     m_cache->insert(k, offset, v);
 #if 0
@@ -66,6 +80,8 @@ void rewriter_core::cache_shifted_result(expr * k, unsigned offset, expr * v) {
 void rewriter_core::cache_result(expr * k, expr * v, proof * pr) {
     m_cache->insert(k, v);
     SASSERT(m_proof_gen);
+    SASSERT(rewrites_from(k, pr));
+    SASSERT(rewrites_to(v, pr));
     m_cache_pr->insert(k, pr);
 }
 
@@ -259,7 +275,7 @@ void var_shifter_core::process_app(app * t, frame & fr) {
     SASSERT(fr.m_spos + num_args == m_result_stack.size());
     expr * new_t;
     if (fr.m_new_child) {
-        expr * const * new_args = m_result_stack.c_ptr() + fr.m_spos;
+        expr * const * new_args = m_result_stack.data() + fr.m_spos;
         new_t = m().mk_app(t->get_decl(), num_args, new_args);
     }
     else {
@@ -289,7 +305,7 @@ void var_shifter_core::process_quantifier(quantifier * q, frame & fr) {
     SASSERT(fr.m_spos + num_children == m_result_stack.size());
     expr * new_q;
     if (fr.m_new_child) {
-        expr * const * it = m_result_stack.c_ptr() + fr.m_spos;
+        expr * const * it = m_result_stack.data() + fr.m_spos;
         expr * new_expr = *it;
         ++it;
         expr * const * new_pats    = it;

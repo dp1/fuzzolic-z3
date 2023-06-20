@@ -89,6 +89,10 @@ namespace qe {
                 m_t2x(m)
             {}
 
+            ~solver_state() {
+                reset();
+            }
+
             void g2s(goal const& g) {
                 goal2nlsat gs;
                 gs(g, m_params, m_solver, m_a2b, m_t2x);
@@ -205,13 +209,13 @@ namespace qe {
             }
             
             void display_assumptions(std::ostream& out) {
-                m_solver.display(out << "assumptions: ", m_asms.size(), m_asms.c_ptr());
+                m_solver.display(out << "assumptions: ", m_asms.size(), m_asms.data());
                 out << "\n";
             }
             
             void display_preds(std::ostream& out) {
                 for (unsigned i = 0; i < m_preds.size(); ++i) {                
-                    m_solver.display(out << i << ": ", m_preds[i]->size(), m_preds[i]->c_ptr());
+                    m_solver.display(out << i << ": ", m_preds[i]->size(), m_preds[i]->data());
                     out << "\n";
                 }
             }
@@ -231,6 +235,7 @@ namespace qe {
                 m_bound_bvars.reset();
                 m_preds.reset();
                 for (auto const& kv : m_bvar2level) {
+                    
                     m_solver.dec_ref(kv.m_key);
                 }
                 m_rvar2level.reset();
@@ -251,11 +256,11 @@ namespace qe {
         stats                  m_stats;
         statistics             m_st;
         obj_hashtable<expr>    m_free_vars;
-        obj_hashtable<expr>    m_aux_vars;
         expr_ref_vector        m_answer;
         expr_safe_replace      m_answer_simplify;
         expr_ref_vector        m_trail;
-        
+        ref<generic_model_converter> m_div_mc;
+
         lbool check_sat() {
             while (true) {
                 ++m_stats.m_num_rounds;
@@ -356,8 +361,8 @@ namespace qe {
                 out << "(declare-const x" << kv.m_key << " Real)\n";
             }
             s.m_solver.display(out << "(assert (not (exists ((", v) << " Real)) \n";
-            s.m_solver.display_smt2(out << "(and ", r1.size(), r1.c_ptr()) << "))))\n";
-            s.m_solver.display_smt2(out << "(assert (and ", r2.size(), r2.c_ptr()); out << "))\n";
+            s.m_solver.display_smt2(out << "(and ", r1.size(), r1.data()) << "))))\n";
+            s.m_solver.display_smt2(out << "(assert (and ", r2.size(), r2.data()); out << "))\n";
             out << "(check-sat)\n(reset)\n";            
         }
 
@@ -375,15 +380,14 @@ namespace qe {
                     result.push_back(lit);
                 }
             }
-            TRACE("qe", s.m_solver.display(tout, result.size(), result.c_ptr()); tout << "\n";);
+            TRACE("qe", s.m_solver.display(tout, result.size(), result.data()); tout << "\n";);
             // project quantified real variables.
             // They are sorted by size, so we project the largest variables first to avoid 
             // renaming variables. 
             for (unsigned i = vars.size(); i-- > 0;) {
                 new_result.reset();
-                ex.project(vars[i], result.size(), result.c_ptr(), new_result);
-                TRACE("qe", display_project(tout, vars[i], result, new_result););                
-                TRACE("qe", display_project(std::cout, vars[i], result, new_result););
+                ex.project(vars[i], result.size(), result.data(), new_result);
+                TRACE("qe", display_project(tout, vars[i], result, new_result););
                 result.swap(new_result);
             }
             negate_clause(result);
@@ -408,12 +412,12 @@ namespace qe {
                 cl.push_back(~s.m_solver.mk_true());
             }
             SASSERT(!cl.empty());
-            nlsat::literal_vector lits(cl.size(), cl.c_ptr());
-            s.m_solver.mk_clause(lits.size(), lits.c_ptr());
+            nlsat::literal_vector lits(cl.size(), cl.data());
+            s.m_solver.mk_clause(lits.size(), lits.data());
         }
 
         max_level get_level(clause const& cl) {
-            return get_level(cl.size(), cl.c_ptr());
+            return get_level(cl.size(), cl.data());
         }
 
         max_level get_level(unsigned n, nlsat::literal const* ls) {
@@ -433,8 +437,10 @@ namespace qe {
             s.m_solver.vars(l, vs);
             TRACE("qe", s.m_solver.display(tout << vs << " ", l) << "\n";);
             for (unsigned v : vs) {
-                level.merge(s.m_rvar2level[v]);                
+                level.merge(s.m_rvar2level.get(v, max_level()));
             }
+            if (level == max_level()) 
+                throw default_exception("level not in NRA");
             set_level(l.var(), level);
             return level;
         }
@@ -606,7 +612,7 @@ namespace qe {
                 if (a.is_div(n, n1, n2) && a.is_numeral(n2, r) && !r.is_zero()) {
                     return;
                 }
-                if (a.is_power(n, n1, n2) && a.is_numeral(n2, r) && r.is_unsigned()) {
+                if (a.is_power(n, n1, n2) && a.is_numeral(n2, r) && r.is_unsigned() && r.is_pos()) {
                     return;
                 }
                 if (a.is_div(n) && s.m_mode == qsat_t && is_ground(n)) {
@@ -631,7 +637,6 @@ namespace qe {
              p = p', q = q' => div_pq = div_pq'
 
          */
-
         void ackermanize_div(expr_ref& fml, expr_ref_vector& paxioms) {
             is_pure_proc is_pure(*this);
             {
@@ -644,6 +649,7 @@ namespace qe {
                 div_rewriter_star rw(*this);
                 rw(fml, fml, pr);
                 vector<div> const& divs = rw.divs();
+                m_div_mc = alloc(generic_model_converter, m, "purify");
                 for (unsigned i = 0; i < divs.size(); ++i) {
                     expr_ref den_is0(m.mk_eq(divs[i].den, arith.mk_real(0)), m);
                     paxioms.push_back(m.mk_or(den_is0, m.mk_eq(divs[i].num, arith.mk_mul(divs[i].den, divs[i].name))));
@@ -653,6 +659,13 @@ namespace qe {
                                                   m.mk_eq(divs[i].name, divs[j].name)));
                     }
                 }
+                expr_ref body(arith.mk_real(0), m);
+                expr_ref v0(m.mk_var(0, arith.mk_real()), m);
+                expr_ref v1(m.mk_var(1, arith.mk_real()), m);
+                for (auto const& p : divs) {
+                    body = m.mk_ite(m.mk_and(m.mk_eq(v0, p.num), m.mk_eq(v1, p.den)), p.name, body);
+                }
+                m_div_mc->add(arith.mk_div0(), body);
             }
         }
 
@@ -661,7 +674,6 @@ namespace qe {
             m_st.reset();        
             s.m_solver.collect_statistics(m_st);
             m_free_vars.reset();
-            m_aux_vars.reset();
             m_answer.reset();
             m_answer_simplify.reset();
             m_trail.reset();
@@ -779,17 +791,17 @@ namespace qe {
             for (auto const& kv : s.m_t2x) {
                 nlsat::var x = kv.m_value;
                 expr * t = kv.m_key;
-                if (!is_uninterp_const(t) || !m_free_vars.contains(t) || m_aux_vars.contains(t))
+                if (!is_uninterp_const(t) || !m_free_vars.contains(t))
                     continue;
                 expr * v;
                 try {
-                    v = util.mk_numeral(s.m_rmodel0.value(x), util.is_int(t));
+                    v = util.mk_numeral(s.m_solver.am(), s.m_rmodel0.value(x), util.is_int(t));
                 }
                 catch (z3_error & ex) {
                     throw ex;
                 }
                 catch (z3_exception &) {
-                    v = util.mk_to_int(util.mk_numeral(s.m_rmodel0.value(x), false));
+                    v = util.mk_to_int(util.mk_numeral(s.m_solver.am(), s.m_rmodel0.value(x), false));
                     ok = false;
                 }
                 md->register_decl(to_app(t)->get_decl(), v);
@@ -797,7 +809,7 @@ namespace qe {
             for (auto const& kv : s.m_a2b) {
                 expr * a = kv.m_key;
                 nlsat::bool_var b = kv.m_value;
-                if (a == nullptr || !is_uninterp_const(a) || b == s.m_is_true.var() || !m_free_vars.contains(a) || m_aux_vars.contains(a))
+                if (a == nullptr || !is_uninterp_const(a) || b == s.m_is_true.var() || !m_free_vars.contains(a))
                     continue;
                 lbool val = s.m_bmodel0.get(b, l_undef);
                 if (val == l_undef)
@@ -817,14 +829,13 @@ namespace qe {
             m_nftactic(nullptr),
             m_answer(m),
             m_answer_simplify(m),
-            m_trail(m)
-        {
+            m_trail(m),
+            m_div_mc(nullptr) {
             s.m_solver.get_explain().set_signed_project(true);
             m_nftactic = mk_tseitin_cnf_tactic(m);
         }
 
-        ~nlqsat() override {
-        }
+        char const* name() const override { return "nlqsat"; }
 
         void updt_params(params_ref const & p) override {
             params_ref p2(p);
@@ -844,7 +855,7 @@ namespace qe {
             ptr_vector<expr> fmls;
             expr_ref fml(m);
             in->get_formulas(fmls);
-            fml = mk_and(m, fmls.size(), fmls.c_ptr());
+            fml = mk_and(m, fmls.size(), fmls.data());
             if (m_mode == elim_t) {
                 fml = m.mk_not(fml);
             }                         
@@ -878,7 +889,37 @@ namespace qe {
                 if (in->models_enabled()) {
                     model_converter_ref mc;
                     VERIFY(mk_model(mc));
+                    mc = concat(m_div_mc.get(), mc.get());                    
                     in->add(mc.get());
+                    
+#if 0
+                    model_ref mdl;
+                    model_converter2model(m, mc.get(), mdl);
+
+                    for (expr* f : fmls) {
+                        if (is_ground(f)) 
+                            std::cout << mk_pp(f, m) << " |-> " << (*mdl)(f) << "\n";
+                    }
+                    break;
+                    ptr_vector<expr> todo;
+                    todo.append(fmls.size(), fmls.c_ptr());
+                    ast_mark visited;
+                    while (!todo.empty()) {
+                        expr* e = todo.back();
+                        todo.pop_back();
+                        if (visited.is_marked(e)) continue;
+                        visited.mark(e, true);
+                        if (is_ground(e)) {
+                            std::cout << mk_pp(e, m) << " |-> " << (*mdl)(e) << "\n";
+                        }
+                        if (is_app(e)) {
+                            for (expr* arg : *to_app(e)) todo.push_back(arg);
+                        }
+                        else if (is_quantifier(e)) {
+                            todo.push_back(to_quantifier(e)->get_expr());
+                        }
+                    }
+#endif
                 }
                 break;
             case l_undef:

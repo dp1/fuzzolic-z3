@@ -13,11 +13,33 @@ Author:
 
     Leonardo (leonardo) 2011-10-26
 
-Notes:
+Tactic Documentation:
+
+## Tactic ctx-simplify
+
+### Short Description:
+
+The tactic performs simplifies sub-formulas using context built up by walking assertions and sub-formulas.
+
+### Example
+ 
+```z3
+  (declare-const p Bool)
+  (declare-const q Bool)
+  (declare-const r Bool)
+  (declare-fun f (Bool) Bool)
+  (assert p)
+  (assert (or (f p) (and r (or (not r) q))))
+  (apply ctx-simplify)
+```
+
+### Notes
+
+* supports proof terms with limited features
+
 
 --*/
-#ifndef CTX_SIMPLIFY_TACTIC_H_
-#define CTX_SIMPLIFY_TACTIC_H_
+#pragma once
 
 #include "tactic/tactical.h"
 #include "tactic/goal_num_occurs.h"
@@ -27,7 +49,7 @@ public:
     class simplifier {
         goal_num_occurs* m_occs;
     public:
-        virtual ~simplifier() {}
+        virtual ~simplifier() = default;
         virtual bool assert_expr(expr * t, bool sign) = 0;
         virtual bool simplify(expr* t, expr_ref& result) = 0;
         virtual bool may_simplify(expr* t) { return true; }
@@ -50,6 +72,8 @@ public:
 
     ~ctx_simplify_tactic() override;
 
+    char const* name() const override { return "ctx_simplify"; }
+
     void updt_params(params_ref const & p) override;
     static  void get_param_descrs(param_descrs & r);
     void collect_param_descrs(param_descrs & r) override { get_param_descrs(r); }
@@ -65,4 +89,3 @@ tactic * mk_ctx_simplify_tactic(ast_manager & m, params_ref const & p = params_r
   ADD_TACTIC("ctx-simplify", "apply contextual simplification rules.", "mk_ctx_simplify_tactic(m, p)")
 */
 
-#endif

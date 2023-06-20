@@ -13,14 +13,12 @@ Author:
  
     Nikolaj Bjorner (nbjorner) 2013-11-4
 
-Notes:
-
 --*/
 #include "ast/normal_forms/defined_names.h"
 #include "ast/rewriter/rewriter_def.h"
 #include "ast/scoped_proof.h"
 #include "tactic/tactical.h"
-#include "tactic/tactic_params.hpp"
+#include "params/tactic_params.hpp"
 
 
 
@@ -80,14 +78,14 @@ class blast_term_ite_tactic : public tactic {
                     expr_ref e1(m), e2(m);
                     ptr_vector<expr> args1(num_args, args);
                     args1[i] = t;
-                    e1 = m.mk_app(f, num_args, args1.c_ptr());
+                    e1 = m.mk_app(f, num_args, args1.data());
                     if (m.are_equal(t, e)) {
                         result = e1;
                         return BR_REWRITE1;
                     }
                     else {
                         args1[i] = e;
-                        e2 = m.mk_app(f, num_args, args1.c_ptr());
+                        e2 = m.mk_app(f, num_args, args1.data());
                         result = m.mk_ite(c, e1, e2);
                         ++m_num_fresh;
                         return BR_REWRITE3;
@@ -128,7 +126,6 @@ class blast_term_ite_tactic : public tactic {
         }
         
         void operator()(goal_ref const & g, goal_ref_buffer & result) {
-            SASSERT(g->is_well_sorted());
             tactic_report report("blast-term-ite", *g);
             bool produce_proofs = g->proofs_enabled();
 
@@ -153,8 +150,6 @@ class blast_term_ite_tactic : public tactic {
             report_tactic_progress(":blast-term-ite-consts", m_rw.m_cfg.m_num_fresh + num_fresh);
             g->inc_depth();
             result.push_back(g.get());
-            TRACE("blast_term_ite", g->display(tout););
-            SASSERT(g->is_well_sorted());
         }
     };
     
@@ -174,15 +169,17 @@ public:
         dealloc(m_imp);
     }
 
+    char const* name() const override { return "blast_term_ite"; }
+
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        m_imp->m_rw.m_cfg.updt_params(p);
+        m_params.append(p);
+        m_imp->m_rw.m_cfg.updt_params(m_params);
     }
 
     void collect_param_descrs(param_descrs & r) override {
         insert_max_memory(r);
         insert_max_steps(r);
-        r.insert("max_inflation", CPK_UINT, "(default: infinity) multiplicative factor of initial term size.");
+        r.insert("max_inflation", CPK_UINT, "(default: infinity) multiplicative factor of initial term size.", "4294967295");
     }
     
     void operator()(goal_ref const & in, goal_ref_buffer & result) override {

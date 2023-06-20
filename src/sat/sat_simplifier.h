@@ -18,8 +18,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef SAT_SIMPLIFIER_H_
-#define SAT_SIMPLIFIER_H_
+#pragma once
 
 #include "sat/sat_types.h"
 #include "sat/sat_clause.h"
@@ -32,26 +31,32 @@ Revision History:
 #include "util/statistics.h"
 #include "util/params.h"
 
+namespace pb {
+    class solver;
+}
+
 namespace sat {
     class solver;
 
     class use_list {
         vector<clause_use_list> m_use_list;
+        
     public:
         void init(unsigned num_vars);
+        void reserve(unsigned num_vars) { while (m_use_list.size() <= 2*num_vars) m_use_list.push_back(clause_use_list()); }
         void insert(clause & c);
         void block(clause & c);
         void unblock(clause & c);
         void erase(clause & c);
         void erase(clause & c, literal l);
-        clause_use_list & get(literal l) { return m_use_list[l.index()]; }
-        clause_use_list const & get(literal l) const { return m_use_list[l.index()]; }
+        clause_use_list& get(literal l) { return m_use_list[l.index()]; }
+        clause_use_list const& get(literal l) const { return m_use_list[l.index()]; }
         void finalize() { m_use_list.finalize(); }
         std::ostream& display(std::ostream& out, literal l) const { return m_use_list[l.index()].display(out); }
     };
 
     class simplifier {
-        friend class ba_solver;
+        friend class pb::solver;
         friend class elim_vars;
         solver &               s;
         unsigned               m_num_calls;
@@ -127,7 +132,7 @@ namespace sat {
         void init_visited();
         void mark_visited(literal l) { m_visited[l.index()] = true; }
         void unmark_visited(literal l) { m_visited[l.index()] = false; }
-        bool is_marked(literal l) const { return m_visited[l.index()] != 0; }
+        
         void mark_all_but(clause const & c, literal l);
         void unmark_all(clause const & c);
 
@@ -240,7 +245,8 @@ namespace sat {
         void propagate_unit(literal l);
         void subsume();
 
+        bool is_marked(literal l) const { return m_visited[l.index()] != 0; }
+
     };
 };
 
-#endif

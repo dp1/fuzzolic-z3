@@ -104,9 +104,9 @@ struct goal2nlsat::imp {
             ps.push_back(fs[i]);
             is_even.push_back(fs.get_degree(i) % 2 == 0);
         }
-        if (m_qm.is_neg(fs.get_constant()))
-            k = flip(k);
-        return m_solver.mk_ineq_atom(k, ps.size(), ps.c_ptr(), is_even.c_ptr());
+        if (m_qm.is_neg(fs.get_constant()))             
+            k = flip(k);            
+        return m_solver.mk_ineq_atom(k, ps.size(), ps.data(), is_even.data());
     }
 
     nlsat::literal process_atom(app * f, nlsat::atom::kind k) {
@@ -201,6 +201,7 @@ struct goal2nlsat::imp {
                 case OP_XOR:
                 case OP_NOT:
                 case OP_IMPLIES:
+                case OP_ITE:
                     throw tactic_exception("convert goal into cnf before applying nlsat");
                 case OP_DISTINCT:
                     throw tactic_exception("eliminate distinct operator (use tactic '(using-params simplify :blast-distinct true)') before applying nlsat");
@@ -247,7 +248,7 @@ struct goal2nlsat::imp {
         for (unsigned i = 0; i < num_lits; i++) {
             ls.push_back(process_literal(lits[i]));
         }
-        m_solver.mk_clause(ls.size(), ls.c_ptr(), dep);
+        m_solver.mk_clause(ls.size(), ls.data(), dep);
     }
 
     void operator()(goal const & g) {
@@ -364,7 +365,7 @@ public:
                 //expr*    x = m_x2t->find(ra->x());
                 std::ostringstream strm;
                 s.display(strm, l.sign()?~l:l);
-                result = m.mk_const(symbol(strm.str().c_str()), m.mk_bool_sort());
+                result = m.mk_const(symbol(strm.str()), m.mk_bool_sort());
             }
         }
 

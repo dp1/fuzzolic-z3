@@ -13,11 +13,24 @@ Author:
 
     Leonardo de Moura (leonardo) 2012-02-03
 
-Revision History:
+Tactic Documentation:
+
+## Tactic factor
+
+### Short Description
+
+Factor polynomials in equalities and inequalities.
+
+### Example
+```z3
+(declare-const x Real)
+(declare-const y Real)
+(assert (> (* x x) (* x y)))
+(apply factor)
+```
 
 --*/
-#ifndef FACTOR_TACTIC_H_
-#define FACTOR_TACTIC_H_
+#pragma once
 
 #include "util/params.h"
 class ast_manager;
@@ -27,4 +40,3 @@ tactic * mk_factor_tactic(ast_manager & m, params_ref const & p = params_ref());
 /*
   ADD_TACTIC("factor", "polynomial factorization.", "mk_factor_tactic(m, p)")
 */
-#endif

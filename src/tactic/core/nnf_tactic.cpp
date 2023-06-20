@@ -18,7 +18,7 @@ Revision History:
 --*/
 #include "ast/normal_forms/nnf.h"
 #include "tactic/tactical.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 
 class nnf_tactic : public tactic {
     params_ref    m_params;
@@ -47,15 +47,14 @@ public:
         return alloc(nnf_tactic, m_params);
     }
 
-    ~nnf_tactic() override {}
+    char const* name() const override { return "nnf"; }
 
-    void updt_params(params_ref const & p) override { m_params = p; }
+    void updt_params(params_ref const & p) override { m_params.append(p); }
 
     void collect_param_descrs(param_descrs & r) override { nnf::get_param_descrs(r); }
 
     void operator()(goal_ref const & g, goal_ref_buffer & result) override {
         TRACE("nnf", tout << "params: " << m_params << "\n"; g->display(tout););
-        SASSERT(g->is_well_sorted());
         tactic_report report("nnf", *g);
         bool produce_proofs = g->proofs_enabled();
 
@@ -71,7 +70,7 @@ public:
         proof_ref  new_pr(m);
         
         unsigned sz = g->size();
-        for (unsigned i = 0; i < sz; i++) {
+        for (unsigned i = 0; !g->inconsistent() && i < sz; i++) {
             expr * curr = g->form(i);
             local_nnf(curr, defs, def_prs, new_curr, new_pr);
             if (produce_proofs) {
@@ -82,7 +81,7 @@ public:
         }
         
         sz = defs.size();
-        for (unsigned i = 0; i < sz; i++) {
+        for (unsigned i = 0; !g->inconsistent() && i < sz; i++) {
             if (produce_proofs)
                 g->assert_expr(defs.get(i), def_prs.get(i), nullptr);
             else
@@ -91,14 +90,12 @@ public:
         g->inc_depth();
         result.push_back(g.get());
         unsigned num_extra_names = dnames.get_num_names();
-        if (num_extra_names > 0) {
+        if (num_extra_names > 0 && !g->inconsistent()) {
             generic_model_converter * fmc = alloc(generic_model_converter, m, "nnf");
             g->add(fmc);
             for (unsigned i = 0; i < num_extra_names; i++)
                 fmc->hide(dnames.get_name_decl(i));
         }
-        TRACE("nnf", g->display(tout););
-        SASSERT(g->is_well_sorted());
     }
     
     void cleanup() override {}

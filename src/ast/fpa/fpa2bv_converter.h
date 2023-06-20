@@ -16,8 +16,7 @@ Author:
 Notes:
 
 --*/
-#ifndef FPA2BV_CONVERTER_H_
-#define FPA2BV_CONVERTER_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "util/obj_hashtable.h"
@@ -30,6 +29,7 @@ Notes:
 #include "ast/pb_decl_plugin.h"
 #include "ast/seq_decl_plugin.h"
 #include "ast/rewriter/bool_rewriter.h"
+#include "ast/rewriter/th_rewriter.h"
 
 class fpa2bv_converter {
 public:
@@ -40,11 +40,11 @@ public:
 protected:
     ast_manager              & m;
     bool_rewriter              m_simp;
-    fpa_util                   m_util;
     bv_util                    m_bv_util;
     arith_util                 m_arith_util;
     datatype_util              m_dt_util;
     seq_util                   m_seq_util;
+    fpa_util                   m_util;
     mpf_manager              & m_mpf_manager;
     unsynch_mpz_manager      & m_mpz_manager;
     fpa_decl_plugin          * m_plugin;
@@ -59,8 +59,9 @@ protected:
     friend class bv2fpa_converter;
 
 public:
+
     fpa2bv_converter(ast_manager & m);
-    ~fpa2bv_converter();
+    virtual ~fpa2bv_converter();
 
     fpa_util & fu() { return m_util; }
     bv_util & bu() { return m_bv_util; }
@@ -135,19 +136,25 @@ public:
     void mk_to_fp_unsigned(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
     void mk_to_ieee_bv(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
     void mk_to_ieee_bv_unspecified(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
+    void mk_to_ieee_bv_i(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
     void mk_to_fp_real(func_decl * f, sort * s, expr * rm, expr * x, expr_ref & result);
     void mk_to_fp_real_int(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
 
     void mk_to_ubv(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
     void mk_to_sbv(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
+    void mk_to_ubv_i(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
+    void mk_to_sbv_i(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
     void mk_to_bv_unspecified(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
     void mk_to_real(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
+    void mk_to_real_i(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
     void mk_to_real_unspecified(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
 
     void set_unspecified_fp_hi(bool v) { m_hi_fp_unspecified = v; }
 
     void mk_min(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
     void mk_max(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
+    void mk_min_i(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
+    void mk_max_i(func_decl * f, unsigned num, expr * const * args, expr_ref & result);
     expr_ref mk_min_max_unspecified(func_decl * f, expr * x, expr * y);
 
     void reset();
@@ -225,4 +232,20 @@ private:
     expr_ref extra_quantify(expr * e);
 };
 
-#endif
+class fpa2bv_converter_wrapped : public fpa2bv_converter {
+    th_rewriter& m_rw;
+ public:
+
+    fpa2bv_converter_wrapped(ast_manager & m, th_rewriter& rw) :
+        fpa2bv_converter(m),
+        m_rw(rw) {}
+    void mk_const(func_decl * f, expr_ref & result) override;
+    void mk_rm_const(func_decl * f, expr_ref & result) override;
+    app_ref wrap(expr * e);
+    app_ref unwrap(expr * e, sort * s);
+
+    expr* bv2rm_value(expr* b);
+    expr* bv2fpa_value(sort* s, expr* a, expr* b = nullptr, expr* c = nullptr);
+
+};
+

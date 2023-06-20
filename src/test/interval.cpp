@@ -23,6 +23,7 @@ Revision History:
 #include "ast/ast.h"
 #include "util/debug.h"
 #include "util/rlimit.h"
+#include <iostream>
 
 template class interval_manager<im_default_config>;
 typedef im_default_config::interval interval;
@@ -211,20 +212,20 @@ char const * get_next_file_name() {
 }
 
 static void display_lemmas(unsynch_mpq_manager & nm, char const * result_term,
-                           interval const & a, interval const & b, interval const & r, interval_deps const & deps) {
+                           interval const & a, interval const & b, interval const & r, interval_deps_combine_rule const & deps) {
     {
         std::ofstream out(get_next_file_name());
         display_preamble(out);
-        assert_hyp(out, nm, "a", a, dep_in_lower1(deps.m_lower_deps), dep_in_upper1(deps.m_lower_deps));
-        assert_hyp(out, nm, "b", b, dep_in_lower2(deps.m_lower_deps), dep_in_upper2(deps.m_lower_deps));
+        assert_hyp(out, nm, "a", a, dep_in_lower1(deps.m_lower_combine), dep_in_upper1(deps.m_lower_combine));
+        assert_hyp(out, nm, "b", b, dep_in_lower2(deps.m_lower_combine), dep_in_upper2(deps.m_lower_combine));
         assert_conj(out, nm, result_term, r, true, false);
         out << "(check-sat)\n";
     }
     {
         std::ofstream out(get_next_file_name());
         display_preamble(out);
-        assert_hyp(out, nm, "a", a, dep_in_lower1(deps.m_upper_deps), dep_in_upper1(deps.m_upper_deps));
-        assert_hyp(out, nm, "b", b, dep_in_lower2(deps.m_upper_deps), dep_in_upper2(deps.m_upper_deps));
+        assert_hyp(out, nm, "a", a, dep_in_lower1(deps.m_upper_combine), dep_in_upper1(deps.m_upper_combine));
+        assert_hyp(out, nm, "b", b, dep_in_lower2(deps.m_upper_combine), dep_in_upper2(deps.m_upper_combine));
         assert_conj(out, nm, result_term, r, false, true);
         out << "(check-sat)\n";
     }
@@ -240,7 +241,7 @@ static void tst_ ## NAME(unsigned N, unsigned magnitude) {              \
     for (unsigned i = 0; i < N; i++) {                                  \
         mk_random_interval(im, a, magnitude);                           \
         mk_random_interval(im, b, magnitude);                           \
-        interval_deps deps;                                             \
+        interval_deps_combine_rule deps;                                             \
         im.NAME(a, b, r, deps);                                         \
                                                                         \
         display_lemmas(nm, RES_TERM, a, b, r, deps);                    \
@@ -260,7 +261,7 @@ static void tst_neg(unsigned N, unsigned magnitude) {
 
     for (unsigned i = 0; i < N; i++) {
         mk_random_interval(im, a, magnitude);
-        interval_deps deps;
+        interval_deps_combine_rule deps;
         im.neg(a, r, deps);
         display_lemmas(nm, "(- a)", a, b, r, deps);
     }
@@ -275,7 +276,7 @@ static void tst_pw_2(unsigned N, unsigned magnitude) {
 
     for (unsigned i = 0; i < N; i++) {
         mk_random_interval(im, a, magnitude);
-        interval_deps deps;
+        interval_deps_combine_rule deps;
         im.power(a, 2, r, deps);
         display_lemmas(nm, "(* a a)", a, b, r, deps);
     }
@@ -290,7 +291,7 @@ static void tst_pw_3(unsigned N, unsigned magnitude) {
 
     for (unsigned i = 0; i < N; i++) {
         mk_random_interval(im, a, magnitude);
-        interval_deps deps;
+        interval_deps_combine_rule deps;
         im.power(a, 3, r, deps);
         display_lemmas(nm, "(* a a a)", a, b, r, deps);
     }
@@ -311,7 +312,7 @@ static void tst_root_2(unsigned N, unsigned magnitude, unsigned precision) {
         mk_random_interval(im, a, magnitude);
         if (!im.lower_is_neg(a)) {
             i++;
-            interval_deps deps;
+            interval_deps_combine_rule deps;
             im.nth_root(a, 2, p, r, deps);
             display_lemmas(nm, "(^ a (/ 1.0 2.0))", a, b, r, deps);
         }
@@ -332,7 +333,7 @@ static void tst_root_3(unsigned N, unsigned magnitude, unsigned precision) {
     while (i < N) {
         mk_random_interval(im, a, magnitude);
         i++;
-        interval_deps deps;
+        interval_deps_combine_rule deps;
         im.nth_root(a, 3, p, r, deps);
         display_lemmas(nm, "(^ a (/ 1.0 3.0))", a, b, r, deps);
     }
@@ -351,7 +352,7 @@ static void tst_inv(unsigned N, unsigned magnitude) {
             if (!im.contains_zero(a))
                 break;
         }
-        interval_deps deps;
+        interval_deps_combine_rule deps;
         im.inv(a, r, deps);
         display_lemmas(nm, "(/ 1 a)", a, b, r, deps);
     }
@@ -371,7 +372,7 @@ static void tst_div(unsigned N, unsigned magnitude) {
             if (!im.contains_zero(b))
                 break;
         }
-        interval_deps deps;
+        interval_deps_combine_rule deps;
         im.div(a, b, r, deps);
         display_lemmas(nm, "(/ a b)", a, b, r, deps);
     }
@@ -406,7 +407,7 @@ static void tst_float() {
     std::cout << "\n";
     im.display(std::cout, b);
     std::cout << "\n";
-    interval_deps deps;
+    interval_deps_combine_rule deps;
     im.add(a, b, c, deps);
     im.display(std::cout, c);
     std::cout << "\n";

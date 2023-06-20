@@ -43,9 +43,7 @@ struct simplify_tactic::imp {
     }
 
     void operator()(goal & g) {
-        SASSERT(g.is_well_sorted());
         tactic_report report("simplifier", g);
-        TRACE("before_simplifier", g.display(tout););
         m_num_steps = 0;
         if (g.inconsistent())
             return;
@@ -64,11 +62,9 @@ struct simplify_tactic::imp {
             }
             g.update(idx, new_curr, new_pr, g.dep(idx));
         }
-        TRACE("after_simplifier_bug", g.display(tout););
+        TRACE("simplifier", g.display(tout););
         g.elim_redundancies();
-        TRACE("after_simplifier", g.display(tout););
         TRACE("after_simplifier_detail", g.display_with_dependencies(tout););
-        SASSERT(g.is_well_sorted());
     }
 
     unsigned get_num_steps() const { return m_num_steps; }
@@ -84,8 +80,8 @@ simplify_tactic::~simplify_tactic() {
 }
 
 void simplify_tactic::updt_params(params_ref const & p) {
-    m_params = p;
-    m_imp->m_r.updt_params(p);
+    m_params.append(p);
+    m_imp->m_r.updt_params(m_params);
 }
 
 void simplify_tactic::get_param_descrs(param_descrs & r) {

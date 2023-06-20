@@ -19,8 +19,7 @@ Author:
 Notes:
 
 --*/
-#ifndef REALCLOSURE_H_
-#define REALCLOSURE_H_
+#pragma once
 
 #include "util/mpq.h"
 #include "util/params.h"
@@ -38,6 +37,7 @@ namespace realclosure {
 
     class mk_interval {
     public:
+        virtual ~mk_interval() = default;
         virtual void operator()(unsigned k, mpqi_manager & im, mpqi_manager::interval & r) = 0;
     };
 
@@ -274,7 +274,7 @@ namespace realclosure {
         num():m_value(nullptr) {}
 
         // Low level functions for implementing the C API
-        void * c_ptr() { return m_value; }
+        void * data() { return m_value; }
         static num mk(void * ptr) { num r; r.m_value = reinterpret_cast<value*>(ptr); return r; }
     };
 };
@@ -401,4 +401,3 @@ inline rc_interval_pp interval_pp(scoped_rcnumeral const & n) {
     return rc_interval_pp(n);
 }
 
-#endif

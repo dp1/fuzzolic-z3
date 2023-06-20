@@ -18,10 +18,8 @@ add_custom_command(OUTPUT "${Z3_DOTNET_NATIVE_FILE}"
     ${Z3_FULL_PATH_API_HEADER_FILES_TO_SCAN}
     "${PROJECT_SOURCE_DIR}/scripts/update_api.py"
     ${Z3_GENERATED_FILE_EXTRA_DEPENDENCIES}
-    # FIXME: When update_api.py no longer uses ``mk_util`` drop this dependency
-    "${PROJECT_SOURCE_DIR}/scripts/mk_util.py"
   COMMENT "Generating ${Z3_DOTNET_NATIVE_FILE}"
-  ${ADD_CUSTOM_COMMAND_USES_TERMINAL_ARG}
+  USES_TERMINAL
 )
 
 # Generate Enumerations.cs
@@ -37,7 +35,7 @@ add_custom_command(OUTPUT "${Z3_DOTNET_CONST_FILE}"
     "${PROJECT_SOURCE_DIR}/scripts/mk_consts_files.py"
     ${Z3_GENERATED_FILE_EXTRA_DEPENDENCIES}
   COMMENT "Generating ${Z3_DOTNET_CONST_FILE}"
-  ${ADD_CUSTOM_COMMAND_USES_TERMINAL_ARG}
+  USES_TERMINAL
 )
 
 set(Z3_DOTNET_ASSEMBLY_SOURCES_IN_SRC_TREE
@@ -55,12 +53,12 @@ set(Z3_DOTNET_ASSEMBLY_SOURCES_IN_SRC_TREE
     BitVecSort.cs
     BoolExpr.cs
     BoolSort.cs
+    CharSort.cs
     Constructor.cs
     ConstructorList.cs
     Context.cs
     DatatypeExpr.cs
     DatatypeSort.cs
-    Deprecated.cs
     EnumSort.cs
     Expr.cs
     FiniteDomainExpr.cs
@@ -77,7 +75,6 @@ set(Z3_DOTNET_ASSEMBLY_SOURCES_IN_SRC_TREE
     FuncInterp.cs
     Global.cs
     Goal.cs
-    IDecRefQueue.cs
     IntExpr.cs
     IntNum.cs
     IntSort.cs
@@ -86,6 +83,11 @@ set(Z3_DOTNET_ASSEMBLY_SOURCES_IN_SRC_TREE
     ListSort.cs
     Log.cs
     Model.cs
+    NativeContext.cs
+    NativeFuncInterp.cs
+    NativeModel.cs
+    NativeSolver.cs
+    OnClause.cs
     Optimize.cs
     ParamDescrs.cs
     Params.cs
@@ -110,6 +112,7 @@ set(Z3_DOTNET_ASSEMBLY_SOURCES_IN_SRC_TREE
     Tactic.cs
     TupleSort.cs
     UninterpretedSort.cs
+    UserPropagator.cs
     Version.cs
     Z3Exception.cs
     Z3Object.cs
@@ -140,7 +143,7 @@ endforeach()
 # Note, nuget package file names do not have the ${VER_REV} part.
 
 set(Z3_DOTNET_NUPKG_VERSION "${VER_MAJOR}.${VER_MINOR}.${VER_BUILD}")
-if("${TARGET_ARCHITECTURE}" STREQUAL "i686")
+if(TARGET_ARCHITECTURE STREQUAL "i686")
     set(Z3_DOTNET_PLATFORM "x86")
 else()
     set(Z3_DOTNET_PLATFORM "AnyCPU")

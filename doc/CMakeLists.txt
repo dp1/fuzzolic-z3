@@ -11,7 +11,7 @@ set(DOTNET_API_OPTIONS "")
 set(JAVA_API_OPTIONS "")
 SET(DOC_EXTRA_DEPENDS "")
 
-if (BUILD_PYTHON_BINDINGS)
+if (Z3_BUILD_PYTHON_BINDINGS)
   # FIXME: Don't hard code this path
   list(APPEND PYTHON_API_OPTIONS "--z3py-package-path" "${PROJECT_BINARY_DIR}/python/z3")
   list(APPEND DOC_EXTRA_DEPENDS "build_z3_python_bindings")
@@ -69,7 +69,7 @@ add_custom_target(api_docs ${ALWAYS_BUILD_DOCS_ARG}
   DEPENDS
     ${DOC_EXTRA_DEPENDS}
   COMMENT "Generating documentation"
-  ${ADD_CUSTOM_TARGET_USES_TERMINAL_ARG}
+  USES_TERMINAL
 )
 
 # Remove generated documentation when running `clean` target.

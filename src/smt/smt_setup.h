@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef SMT_SETUP_H_
-#define SMT_SETUP_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "smt/params/smt_params.h"
@@ -101,6 +100,7 @@ namespace smt {
         void setup_dl();
         void setup_seq_str(static_features const & st);
         void setup_seq();
+        void setup_char();
         void setup_card();
         void setup_i_arith();
         void setup_mi_arith();
@@ -123,5 +123,4 @@ namespace smt {
     };
 };
 
-#endif /* SMT_SETUP_H_ */
 

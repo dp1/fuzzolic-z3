@@ -15,6 +15,7 @@ Copyright (c) 2015 Microsoft Corporation
 #include <iostream>
 #include <fstream>
 #include <limits>
+#include <sstream>
 #include <string.h>
 #include <cstdlib>
 #include "z3++.h"
@@ -1338,9 +1339,10 @@ public:
         }
         else if (e.is_quantifier()) {
             bool is_forall = Z3_is_quantifier_forall(ctx, e);
+            bool is_lambda = Z3_is_lambda(ctx, e);
             unsigned nb = Z3_get_quantifier_num_bound(ctx, e);
 
-            out << (is_forall?"!":"?") << "[";
+            out << (is_lambda?"^":(is_forall?"!":"?")) << "[";
             for (unsigned i = 0; i < nb; ++i) {
                 Z3_symbol n = Z3_get_quantifier_bound_name(ctx, e, i);
                 names.push_back(upper_case_var(z3::symbol(ctx, n)));
@@ -1679,6 +1681,9 @@ public:
                 break;
             case Z3_OP_PR_HYPER_RESOLVE:
                 display_inference(out, "hyper_resolve", "thm", p); 
+                break;
+            case Z3_OP_PR_BIND:
+                display_inference(out, "bind", "th", p);
                 break;
             default:
                 out << "TBD: " << m_node_number << "\n" << p << "\n";
@@ -2192,13 +2197,6 @@ static bool is_smt2_file(char const* filename) {
     return (len > 4 && !strcmp(filename + len - 5,".smt2"));    
 }
 
-static void check_error(z3::context& ctx) {
-    Z3_error_code e = Z3_get_error_code(ctx);
-    if (e != Z3_OK) {
-        std::cout << Z3_get_error_msg(ctx, e) << "\n";
-        exit(1);
-    }
-}
 
 static void display_tptp(std::ostream& out) {
     // run SMT2 parser, pretty print TFA format.
@@ -2307,12 +2305,26 @@ static void display_smt2(std::ostream& out) {
         return;
     }
 
+    z3::expr_vector asms(ctx);
     size_t num_assumptions = fmls.m_formulas.size();
+    for (size_t i = 0; i < num_assumptions; ++i) 
+        asms.push_back(fmls.m_formulas[i]);
 
-    Z3_ast* assumptions = new Z3_ast[num_assumptions];
-    for (size_t i = 0; i < num_assumptions; ++i) {
-        assumptions[i] = fmls.m_formulas[i];
+    for (size_t i = 0; i < asms.size(); ++i) {
+        z3::expr fml = asms[i];
+        if (fml.is_and()) {
+            z3::expr arg0 = fml.arg(0);
+            asms.set(i, arg0);
+            for (unsigned j = 1; j < fml.num_args(); ++j)
+                asms.push_back(fml.arg(j));
+            --i;
+        }
     }
+    
+    Z3_ast* assumptions = new Z3_ast[asms.size()];
+    for (size_t i = 0; i < asms.size(); ++i) 
+        assumptions[i] = asms[i];        
+    Z3_set_ast_print_mode(ctx, Z3_PRINT_SMTLIB_FULL);
     Z3_string s = 
         Z3_benchmark_to_smtlib_string(
             ctx, 
@@ -2320,7 +2332,7 @@ static void display_smt2(std::ostream& out) {
             0,         // no logic is set
             "unknown", // no status annotation
             "",        // attributes
-            static_cast<unsigned>(num_assumptions), 
+            static_cast<unsigned>(asms.size()), 
             assumptions, 
             ctx.bool_val(true));
 

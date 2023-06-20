@@ -22,9 +22,9 @@ Notes:
 #include "ast/ast_pp.h"
 #include "ast/ast_pp_util.h"
 #include "ast/display_dimacs.h"
-#include "tactic/model_converter.h"
+#include "ast/converters/model_converter.h"
 #include "solver/solver.h"
-#include "solver/solver_params.hpp"
+#include "params/solver_params.hpp"
 #include "model/model_evaluator.h"
 #include "model/model_params.hpp"
 
@@ -58,10 +58,10 @@ std::ostream& solver::display(std::ostream & out, unsigned n, expr* const* assum
     return out;
 }
 
-std::ostream& solver::display_dimacs(std::ostream& out) const {
+std::ostream& solver::display_dimacs(std::ostream& out, bool include_names) const {
     expr_ref_vector fmls(get_manager());
     get_assertions(fmls);    
-    return ::display_dimacs(out, fmls);
+    return ::display_dimacs(out, fmls, include_names);
 }
 
 void solver::get_assertions(expr_ref_vector& fmls) const {
@@ -85,11 +85,12 @@ struct scoped_assumption_push {
 };
 
 lbool solver::get_consequences(expr_ref_vector const& asms, expr_ref_vector const& vars, expr_ref_vector& consequences) {
+    scoped_solver_time st(*this);
     try {
         return get_consequences_core(asms, vars, consequences);
     }
     catch (z3_exception& ex) {
-        if (asms.get_manager().canceled()) {
+        if (!asms.get_manager().inc()) {
             set_reason_unknown(Z3_CANCELED_MSG);
             return l_undef;
         }
@@ -201,12 +202,6 @@ bool solver::is_literal(ast_manager& m, expr* e) {
 
 void solver::assert_expr(expr* f) {
     expr_ref fml(f, get_manager());
-    if (m_enforce_model_conversion) {
-        model_converter_ref mc = get_model_converter();
-        if (mc) {
-            (*mc)(fml);        
-        }
-    }
     assert_expr_core(fml);    
 }
 
@@ -214,13 +209,6 @@ void solver::assert_expr(expr* f, expr* t) {
     ast_manager& m = get_manager();
     expr_ref fml(f, m);    
     expr_ref a(t, m);
-    if (m_enforce_model_conversion) {
-        model_converter_ref mc = get_model_converter();
-        if (mc) {
-            (*mc)(fml);        
-            // (*mc)(a);        
-        }
-    }
     assert_expr_core2(fml, a);    
 }
 
@@ -238,16 +226,14 @@ void solver::collect_param_descrs(param_descrs & r) {
 }
 
 void solver::reset_params(params_ref const & p) {
-    m_params = p;
+    m_params.append(p);
     solver_params sp(m_params);
-    m_enforce_model_conversion = sp.enforce_model_conversion();
     m_cancel_backup_file = sp.cancel_backup_file();
 }
 
 void solver::updt_params(params_ref const & p) {
     m_params.copy(p);
     solver_params sp(m_params);
-    m_enforce_model_conversion = sp.enforce_model_conversion();
     m_cancel_backup_file = sp.cancel_backup_file();
 }
 
@@ -256,6 +242,7 @@ expr_ref_vector solver::get_units() {
     ast_manager& m = get_manager();
     expr_ref_vector fmls(m), result(m), tmp(m);
     get_assertions(fmls);
+    get_units_core(fmls);
     obj_map<expr, bool> units;
     for (expr* f : fmls) {
         if (m.is_not(f, f) && is_literal(m, f)) {
@@ -326,6 +313,7 @@ expr_ref_vector solver::get_non_units() {
 
 lbool solver::check_sat(unsigned num_assumptions, expr * const * assumptions) {
     lbool r = l_undef;
+    scoped_solver_time _st(*this);
     try {
         r = check_sat_core(num_assumptions, assumptions);
     }
@@ -335,7 +323,7 @@ lbool solver::check_sat(unsigned num_assumptions, expr * const * assumptions) {
         }
         throw;
     }
-    if (r == l_undef && get_manager().canceled()) {
+    if (r == l_undef && !get_manager().inc()) {
         dump_state(num_assumptions, assumptions);        
     }
     return r;
@@ -344,7 +332,7 @@ lbool solver::check_sat(unsigned num_assumptions, expr * const * assumptions) {
 void solver::dump_state(unsigned sz, expr* const* assumptions) {
     if ((symbol::null != m_cancel_backup_file) &&
         !m_cancel_backup_file.is_numerical() && 
-        m_cancel_backup_file.c_ptr() &&
+        !m_cancel_backup_file.is_null() &&
         m_cancel_backup_file.bare_str()[0]) {
         std::string file = m_cancel_backup_file.str();
         std::ofstream ous(file);

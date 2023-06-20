@@ -23,8 +23,7 @@ Notes:
    [3] Henri Cohen. A Course in Computational Algebraic Number Theory. Springer Verlag, 1993.
 
 --*/
-#ifndef UPOLYNOMIAL_FACTORIZATION_INT_H_
-#define UPOLYNOMIAL_FACTORIZATION_INT_H_
+#pragma once
 
 #include "math/polynomial/upolynomial_factorization.h"
 
@@ -138,7 +137,7 @@ namespace upolynomial {
         // the factors to select from
         factors_type const   & m_factors;
         // which factors are enabled
-        svector<bool>          m_enabled;
+        bool_vector          m_enabled;
         // the size of the current selection
         int                    m_current_size;
         // the current selection: indices at positions < m_current_size, other values are maxed out
@@ -175,6 +174,8 @@ namespace upolynomial {
             m_current.resize(m_factors.distinct_factors()+1, m_factors.distinct_factors());
             m_current_size = 0;
         }
+
+        virtual ~factorization_combination_iterator_base() = default;
 
         /**
            \brief Returns the factors we are enumerating through.
@@ -346,9 +347,9 @@ namespace upolynomial {
         void left(numeral_vector & out) const {
             SASSERT(m_current_size > 0);
             zp_manager & upm = m_factors.upm();
-            upm.set(m_factors[m_current[0]].size(), m_factors[m_current[0]].c_ptr(), out);
+            upm.set(m_factors[m_current[0]].size(), m_factors[m_current[0]].data(), out);
             for (int i = 1; i < m_current_size; ++ i) {
-                upm.mul(out.size(), out.c_ptr(), m_factors[m_current[i]].size(), m_factors[m_current[i]].c_ptr(), out);
+                upm.mul(out.size(), out.data(), m_factors[m_current[i]].size(), m_factors[m_current[i]].data(), out);
             }
         }
 
@@ -402,9 +403,9 @@ namespace upolynomial {
                     if (selection_i >= m_current.size() || (int) current < m_current[selection_i]) {
                         SASSERT(m_factors.get_degree(current) == 1);
                         if (out.empty()) {
-                            upm.set(m_factors[current].size(), m_factors[current].c_ptr(), out);
+                            upm.set(m_factors[current].size(), m_factors[current].data(), out);
                         } else {
-                            upm.mul(out.size(), out.c_ptr(), m_factors[current].size(), m_factors[current].c_ptr(), out);
+                            upm.mul(out.size(), out.data(), m_factors[current].size(), m_factors[current].data(), out);
                         }
                         current ++;
                     } else {
@@ -417,4 +418,3 @@ namespace upolynomial {
     };
 };
 
-#endif

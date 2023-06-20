@@ -30,8 +30,7 @@ Revision History:
         of the current substitution by the number of quantified variables.
 
 --*/
-#ifndef SUBSTITUTION_H_
-#define SUBSTITUTION_H_
+#pragma once
 
 #include "ast/substitution/expr_offset_map.h"
 #include "ast/substitution/var_offset_map.h"
@@ -153,7 +152,7 @@ public:
         return find(to_var(v.get_expr()), v.get_offset(), r);
     }
 
-    void get_binding(unsigned binding_num, var_offset& var, expr_offset& r) {
+    void get_binding(unsigned binding_num, var_offset& var, expr_offset& r) const {
         var = m_vars[binding_num];
         VERIFY(m_subst.find(var.first, var.second, r));
     }
@@ -218,4 +217,3 @@ public:
 
 };
 
-#endif

@@ -25,8 +25,7 @@ Notes:
     A naive approach is to run an algorithm on max flow in order to get a spanning tree.
    
 --*/
-#ifndef NETWORK_FLOW_H_
-#define NETWORK_FLOW_H_
+#pragma once
 
 #include "util/inf_rational.h"
 #include "smt/diff_logic.h"
@@ -88,7 +87,7 @@ namespace smt {
                   m_states(states),
                   m_enter_id(enter_id) {
             }
-            virtual ~pivot_rule_impl() {}
+            virtual ~pivot_rule_impl() = default;
             virtual bool choose_entering_edge() = 0;
             virtual pivot_rule rule() const = 0;
         };
@@ -197,4 +196,3 @@ namespace smt {
     };
 }
 
-#endif

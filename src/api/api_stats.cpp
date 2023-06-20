@@ -15,7 +15,6 @@ Author:
 Revision History:
 
 --*/
-#include<iostream>
 #include "api/z3.h"
 #include "api/api_log_macros.h"
 #include "api/api_context.h"
@@ -29,9 +28,8 @@ extern "C" {
         RESET_ERROR_CODE();
         std::ostringstream buffer;
         to_stats_ref(s).display_smt2(buffer);
-        std::string result = buffer.str();
+        std::string result = std::move(buffer).str();
         // Hack for removing the trailing '\n'
-        result = buffer.str();
         SASSERT(result.size() > 0);
         result.resize(result.size()-1);
         return mk_c(c)->mk_external_string(std::move(result));
@@ -50,7 +48,8 @@ extern "C" {
         Z3_TRY;
         LOG_Z3_stats_dec_ref(c, s);
         RESET_ERROR_CODE();
-        to_stats(s)->dec_ref();
+        if (s)
+            to_stats(s)->dec_ref();
         Z3_CATCH;
     }
     

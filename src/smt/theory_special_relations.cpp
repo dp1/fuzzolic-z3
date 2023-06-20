@@ -36,7 +36,7 @@ namespace smt {
         if (!m_next) {
             sort* s = decl()->get_domain(0);
             sort* domain[2] = {s, s};
-            m_next = m.mk_fresh_func_decl("next", "", 2, domain, s);
+            m_next = m.mk_fresh_func_decl("specrel.next", "", 2, domain, s, false);
         }
         return m_next;
     }
@@ -90,8 +90,8 @@ namespace smt {
         return out;
     }
 
-    theory_special_relations::theory_special_relations(ast_manager& m):
-        theory(m.mk_family_id("special_relations")),
+    theory_special_relations::theory_special_relations(context& ctx, ast_manager& m):
+        theory(ctx, m.mk_family_id("specrels")),
         m_util(m),
         m_can_propagate(false) {
     }
@@ -101,7 +101,7 @@ namespace smt {
     }
 
     theory * theory_special_relations::mk_fresh(context * new_ctx) {
-        return alloc(theory_special_relations, new_ctx->get_manager());
+        return alloc(theory_special_relations, *new_ctx, new_ctx->get_manager());
     }
 
     /**
@@ -112,7 +112,6 @@ namespace smt {
        assert f(term,c) or term != a
      */
     void theory_special_relations::internalize_next(func_decl* f, app* term) {
-        context& ctx = get_context();
         ast_manager& m = get_manager();
         func_decl* nxt = term->get_decl();
         expr* src = term->get_arg(0);
@@ -136,14 +135,13 @@ namespace smt {
 
     bool theory_special_relations::internalize_atom(app * atm, bool gate_ctx) {
         SASSERT(m_util.is_special_relation(atm));
-        relation* r = 0;
+        relation* r = nullptr;
         ast_manager& m = get_manager();
         if (!m_relations.find(atm->get_decl(), r)) {
             r = alloc(relation, m_util.get_property(atm), atm->get_decl(), m);
             m_relations.insert(atm->get_decl(), r);
             for (unsigned i = 0; i < m_atoms_lim.size(); ++i) r->push();
         }
-        context& ctx = get_context();
         expr* arg0 = atm->get_arg(0);
         expr* arg1 = atm->get_arg(1);
         theory_var v0 = mk_var(arg0);
@@ -158,7 +156,6 @@ namespace smt {
     }
 
     theory_var theory_special_relations::mk_var(expr* e) {
-        context& ctx = get_context();
         if (!ctx.e_internalized(e)) {
             ctx.internalize(e, false);
         }
@@ -203,7 +200,7 @@ namespace smt {
             if (extract_equalities(*kv.m_value)) {
                 new_equality = true;
             }
-            if (get_context().inconsistent()) {
+            if (ctx.inconsistent()) {
                 return FC_CONTINUE;
             }
         }
@@ -221,7 +218,6 @@ namespace smt {
     }
 
     enode* theory_special_relations::ensure_enode(expr* e) {
-        context& ctx = get_context();
         if (!ctx.e_internalized(e)) {
             ctx.internalize(e, false);
         }
@@ -233,7 +229,7 @@ namespace smt {
     literal theory_special_relations::mk_literal(expr* _e) {
         expr_ref e(_e, get_manager());
         ensure_enode(e);
-        return get_context().get_literal(e);
+        return ctx.get_literal(e);
     }
 
     theory_var theory_special_relations::mk_var(enode* n) {
@@ -242,8 +238,8 @@ namespace smt {
         }
         else {
             theory_var v = theory::mk_var(n);
-            get_context().attach_th_var(n, this, v);
-            get_context().mark_as_relevant(n);
+            ctx.attach_th_var(n, this, v);
+            ctx.mark_as_relevant(n);
             return v;
         }
     }
@@ -270,7 +266,6 @@ namespace smt {
         //
         func_decl* tcf = r.decl();
         func_decl* f = to_func_decl(tcf->get_parameter(0).get_ast());
-        context& ctx = get_context();
         ast_manager& m = get_manager();
         bool new_assertion = false;
         graph r_graph;
@@ -284,7 +279,7 @@ namespace smt {
                 enode* tcn = ensure_enode(tc_app);
                 if (ctx.get_assignment(tcn) != l_true) {
                     literal consequent = ctx.get_literal(tc_app);
-                    justification* j = ctx.mk_justification(theory_propagation_justification(get_id(), ctx.get_region(), 1, &lit, consequent));
+                    justification* j = ctx.mk_justification(theory_propagation_justification(get_id(), ctx, 1, &lit, consequent));
                     TRACE("special_relations", tout << "propagate: " << tc_app << "\n";);
                     ctx.assign(consequent, j);
                     new_assertion = true;
@@ -330,14 +325,12 @@ namespace smt {
                           );
                     continue;
                 }
-                expr_ref f_app(m.mk_app(f, arg1, arg2), m);                
+                expr_ref f_app(m.mk_app(f, arg1, arg2), m);   
                 ensure_enode(f_app);
                 literal f_lit = ctx.get_literal(f_app);
                 switch (ctx.get_assignment(f_lit)) {
                 case l_true:
-                    UNREACHABLE(); 
-                    // it should already be the case that v1 and reach v2 in the graph.
-                    // whenever f(n1, n2) is asserted.
+                    SASSERT(new_assertion);
                     break;
                 case l_false: {
                     //
@@ -471,14 +464,13 @@ namespace smt {
 
     void theory_special_relations::set_conflict(relation& r) {
         literal_vector const& lits = r.m_explanation;
-        context & ctx = get_context();
         TRACE("special_relations", ctx.display_literals_verbose(tout, lits) << "\n";);
         vector<parameter> params;
         ctx.set_conflict(
             ctx.mk_justification(
                 ext_theory_conflict_justification(
-                    get_id(), ctx.get_region(),
-                    lits.size(), lits.c_ptr(), 0, 0, params.size(), params.c_ptr())));
+                    get_id(), ctx, 
+                    lits.size(), lits.data(), 0, nullptr, params.size(), params.data())));
     }
 
     lbool theory_special_relations::final_check(relation& r) {
@@ -519,7 +511,6 @@ namespace smt {
         bool new_eq = false;
         int_vector scc_id;
         u_map<unsigned> roots;
-        context& ctx = get_context();
         ast_manager& m = get_manager();
         (void)m;
         r.m_graph.compute_zero_edge_scc(scc_id);
@@ -539,9 +530,9 @@ namespace smt {
                     r.m_graph.find_shortest_zero_edge_path(i, j, timestamp, r);
                     r.m_graph.find_shortest_zero_edge_path(j, i, timestamp, r);
                     literal_vector const& lits = r.m_explanation;
-                    TRACE("special_relations", ctx.display_literals_verbose(tout << mk_pp(x->get_owner(), m) << " = " << mk_pp(y->get_owner(), m) << "\n", lits) << "\n";);
-                    IF_VERBOSE(20, ctx.display_literals_verbose(verbose_stream() << mk_pp(x->get_owner(), m) << " = " << mk_pp(y->get_owner(), m) << "\n", lits) << "\n";);
-                    eq_justification js(ctx.mk_justification(ext_theory_eq_propagation_justification(get_id(), ctx.get_region(), lits.size(), lits.c_ptr(), 0, nullptr, 
+                    TRACE("special_relations", ctx.display_literals_verbose(tout << mk_pp(x->get_expr(), m) << " = " << mk_pp(y->get_expr(), m) << "\n", lits) << "\n";);
+                    IF_VERBOSE(20, ctx.display_literals_verbose(verbose_stream() << mk_pp(x->get_expr(), m) << " = " << mk_pp(y->get_expr(), m) << "\n", lits) << "\n";);
+                    eq_justification js(ctx.mk_justification(ext_theory_eq_propagation_justification(get_id(), ctx, lits.size(), lits.data(), 0, nullptr, 
                                                                                                      x, y)));
                     ctx.assign_eq(x, y, js);
                 }
@@ -746,7 +737,8 @@ namespace smt {
     bool theory_special_relations::disconnected(graph const& g, dl_var u, dl_var v) const {
         s_integer val_u = g.get_assignment(u);
         s_integer val_v = g.get_assignment(v);
-        if (val_u == val_v) return u != v;
+        if (val_u == val_v) 
+            return u != v;
         if (val_u < val_v) {
             std::swap(u, v);
             std::swap(val_u, val_v);
@@ -909,7 +901,7 @@ namespace smt {
                                          m.mk_app(memf, x, m.mk_app(tl, S))));            
             recfun_replace rep(m);
             var* vars[2] = { xV, SV };
-            p.set_definition(rep, mem, 2, vars, mem_body);
+            p.set_definition(rep, mem, false, 2, vars, mem_body);
         }
 
         sort_ref tup(dt.mk_pair_datatype(listS, listS, fst, snd, pair), m);
@@ -932,7 +924,7 @@ namespace smt {
 
             recfun_replace rep(m);
             var* vars[5] = { aV, bV, AV, SV, tupV };
-            p.set_definition(rep, nxt, 5, vars, next_body);
+            p.set_definition(rep, nxt, false, 5, vars, next_body);
         }
 
         {
@@ -950,9 +942,9 @@ namespace smt {
             for (atom* ap : r.m_asserted_atoms) {
                 atom& a = *ap;
                 if (!a.phase()) continue;
-                SASSERT(get_context().get_assignment(a.var()) == l_true);
-                expr* x = get_enode(a.v1())->get_root()->get_owner();
-                expr* y = get_enode(a.v2())->get_root()->get_owner();
+                SASSERT(ctx.get_assignment(a.var()) == l_true);
+                expr* x = get_enode(a.v1())->get_root()->get_expr();
+                expr* y = get_enode(a.v2())->get_root()->get_expr();
                 expr* cb = connected_body;
                 expr* args[5] = { x, y, A, S, cb };
                 connected_body = m.mk_app(nextf, 5, args);
@@ -967,7 +959,7 @@ namespace smt {
             TRACE("special_relations", tout << connected_body << "\n";);
             recfun_replace rep(m);
             var* vars[3] = { AV, dstV, SV };
-            p.set_definition(rep, connected, 3, vars, connected_body);            
+            p.set_definition(rep, connected, false, 3, vars, connected_body);
         }
 
         {
@@ -1022,7 +1014,7 @@ namespace smt {
 
         return
             g.is_enabled(edge) &&
-            g.get_assignment(g.get_source(edge)) + s_integer(1) == g.get_assignment(g.get_target(edge));
+            g.get_assignment(g.get_source(edge)) - s_integer(1) == g.get_assignment(g.get_target(edge));
     }
 
     bool theory_special_relations::is_strict_neighbour_edge(graph const& g, edge_id e) const {
@@ -1033,7 +1025,7 @@ namespace smt {
         unsigned sz = g.get_num_nodes();
         svector<dl_var> nodes;
         num_children.resize(sz, 0);
-        svector<bool> processed(sz, false);
+        bool_vector processed(sz, false);
         for (unsigned i = 0; i < sz; ++i) nodes.push_back(i);
         while (!nodes.empty()) {
             dl_var v = nodes.back();
@@ -1151,9 +1143,14 @@ namespace smt {
     }
     
     void theory_special_relations::display_atom(std::ostream & out, atom& a) const {
-        context& ctx = get_context();
         expr* e = ctx.bool_var2expr(a.var());
         out << (a.phase() ? "" : "(not ") << mk_pp(e, get_manager()) << (a.phase() ? "" : ")") << "\n";
     }
-    
+
+
+    void theory_special_relations::get_specrels(func_decl_set& rels) const {
+        for (auto [f, r] : m_relations) 
+            rels.insert(r->m_decl);
+    }
+
 }

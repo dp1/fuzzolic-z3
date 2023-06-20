@@ -19,8 +19,7 @@ Author:
 Notes:
 
 --*/
-#ifndef LINEAR_EQ_SOLVER_H_
-#define LINEAR_EQ_SOLVER_H_
+#pragma once
 
 template<typename numeral_manager> 
 class linear_eq_solver {
@@ -35,7 +34,7 @@ public:
     
     void flush() {
         SASSERT(b.size() == A.size());
-        unsigned sz = A.size();
+        auto sz = A.size();
         for (unsigned i = 0; i < sz; i++) {
             svector<numeral> & as = A[i];
             m.del(b[i]);
@@ -149,4 +148,3 @@ public:
 };
 
 
-#endif

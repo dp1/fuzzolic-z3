@@ -13,12 +13,20 @@ Author:
 
     Christoph (cwinter) 2012-01-16
 
-Notes:
+Tactic Documentation:
 
+## Tactic qffp
+
+### Short Description 
+Tactic for QF_FP formulas
+
+## Tactic qffpbv
+
+### Short Description 
+Tactic for QF_FPBV formulas
 
 --*/
-#ifndef QFFP_TACTIC_H_
-#define QFFP_TACTIC_H_
+#pragma once
 
 #include "util/params.h"
 class ast_manager;
@@ -38,4 +46,3 @@ probe * mk_is_qffpbv_probe();
   ADD_PROBE("is-qffpbv", "true if the goal is in QF_FPBV (floats+bit-vectors).", "mk_is_qffpbv_probe()")
 */
 
-#endif

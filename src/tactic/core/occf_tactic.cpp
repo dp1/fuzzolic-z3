@@ -23,7 +23,7 @@ Revision History:
 --*/
 #include "tactic/tactical.h"
 #include "tactic/core/occf_tactic.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 
 class occf_tactic : public tactic {
     struct     imp {
@@ -35,8 +35,7 @@ class occf_tactic : public tactic {
         }
 
         void checkpoint() {
-            if (m.canceled())
-                throw tactic_exception(TACTIC_CANCELED_MSG);
+            tactic::checkpoint(m);
         }
 
         bool is_literal(expr * t) const {
@@ -127,7 +126,6 @@ class occf_tactic : public tactic {
         
         void operator()(goal_ref const & g, 
                         goal_ref_buffer & result) {
-            SASSERT(g->is_well_sorted());
             fail_if_proof_generation("occf", g);
 
             bool produce_models = g->models_enabled();
@@ -177,12 +175,10 @@ class occf_tactic : public tactic {
                 }
                 if (keep != nullptr)
                     new_lits.push_back(keep);
-                g->update(i, m.mk_or(new_lits.size(), new_lits.c_ptr()), nullptr, d);
+                g->update(i, m.mk_or(new_lits.size(), new_lits.data()), nullptr, d);
             }
             g->inc_depth();
             result.push_back(g.get());
-            TRACE("occf", g->display(tout););
-            SASSERT(g->is_well_sorted());
         }
     };
     
@@ -199,6 +195,8 @@ public:
     ~occf_tactic() override {
         dealloc(m_imp);
     }
+
+    char const* name() const override { return "occf"; }
 
     void updt_params(params_ref const & p) override {}
     void collect_param_descrs(param_descrs & r) override {}

@@ -16,15 +16,14 @@ Author:
 Revision History:
 
 --*/
-#ifndef SCOPED_VECTOR_H_
-#define SCOPED_VECTOR_H_
+#pragma once
 
 #include "util/vector.h"
 
 template<typename T>
 class scoped_vector {
-    unsigned         m_size;
-    unsigned         m_elems_start;
+    unsigned         m_size = 0;
+    unsigned         m_elems_start = 0;
     unsigned_vector  m_sizes;
     vector<T>        m_elems;
     unsigned_vector  m_elems_lim;
@@ -32,8 +31,6 @@ class scoped_vector {
     unsigned_vector  m_src, m_dst;
     unsigned_vector  m_src_lim;
 public:
-    scoped_vector(): m_size(0), m_elems_start(0) {}
-
     // m_index : External-Index -> Internal-Index
     // m_index.size() = max(m_sizes)
     // m_src[i] -> m_dst[i] // trail into m_index updates
@@ -91,6 +88,19 @@ public:
         SASSERT(invariant());
     }
 
+    void set(unsigned idx, T && t) {
+        SASSERT(idx < m_size);
+        unsigned n = m_index[idx];
+        if (n >= m_elems_start) {
+            m_elems[n] = std::move(t);
+        }
+        else {
+            set_index(idx, m_elems.size());
+            m_elems.push_back(std::move(t));
+        }
+        SASSERT(invariant());
+    }
+
     class iterator {
         scoped_vector const& m_vec;
         unsigned m_index;
@@ -118,7 +128,14 @@ public:
 
     void push_back(T const& t) {
         set_index(m_size, m_elems.size());
-        m_elems.push_back(t);    
+        m_elems.push_back(t);
+        ++m_size;
+        SASSERT(invariant());
+    }
+
+    void push_back(T && t) {
+        set_index(m_size, m_elems.size());
+        m_elems.push_back(std::move(t));
         ++m_size;
         SASSERT(invariant());
     }
@@ -135,7 +152,8 @@ public:
 
     void erase_and_swap(unsigned i) {
         if (i + 1 < size()) {
-            set(i, m_elems[m_index[size()-1]]);
+            auto n = m_elems[m_index[size() - 1]];
+            set(i, std::move(n));
         }
         pop_back();
     }
@@ -163,5 +181,3 @@ private:
             m_elems_start <= m_elems.size();
     }
 };
-
-#endif

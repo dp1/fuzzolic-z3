@@ -16,12 +16,12 @@ Author:
 Notes:
 
 --*/
-#ifndef REWRITER_H_
-#define REWRITER_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "ast/rewriter/rewriter_types.h"
 #include "ast/act_cache.h"
+#include "util/obj_hashtable.h"
 
 /**
    \brief Common infrastructure for AST rewriters.
@@ -61,6 +61,7 @@ protected:
     proof_ref_vector           m_result_pr_stack;
     // --------------------------
 
+    obj_hashtable<expr>        m_blocked;
     expr *                     m_root;
     unsigned                   m_num_qvars;
     struct scope {
@@ -87,6 +88,8 @@ protected:
         push_frame_core(t, must_cache(t), st);
     } 
 
+    bool rewrites_to(expr* t, proof* p);
+    bool rewrites_from(expr* t, proof* p);
     void init_cache_stack();
     void del_cache_stack();
     void reset_cache();
@@ -111,6 +114,8 @@ protected:
     void set_new_child_flag(expr * old_t, expr * new_t) { if (old_t != new_t) set_new_child_flag(old_t); }
     
     void elim_reflex_prs(unsigned spos);
+    void block(expr* t) { m_blocked.insert(t); }
+    bool is_blocked(expr* t) const { return m_blocked.contains(t); }
 public:
     rewriter_core(ast_manager & m, bool proof_gen);
     virtual ~rewriter_core();
@@ -149,9 +154,9 @@ public:
        - (VAR i + s2) if i < b 
 */
 class var_shifter : public var_shifter_core {
-    unsigned  m_bound;
-    unsigned  m_shift1;
-    unsigned  m_shift2;
+    unsigned  m_bound  { 0 };
+    unsigned  m_shift1 { 0 };
+    unsigned  m_shift2 { 0 };
     void process_var(var * v) override;
 public:
     var_shifter(ast_manager & m):var_shifter_core(m) {}
@@ -389,6 +394,7 @@ struct default_rewriter_cfg {
     }
     bool reduce_var(var * t, expr_ref & result, proof_ref & result_pr) { return false; }
     bool get_macro(func_decl * d, expr * & def, quantifier * & q, proof * & def_pr) { return false; }
+    bool reduce_macro() { return false; }
     bool get_subst(expr * s, expr * & t, proof * & t_pr) { return false; }
     void reset() {}
     void cleanup() {}
@@ -405,4 +411,3 @@ public:
         rewriter_tpl<beta_reducer_cfg>(m, false, m_cfg) {}
 };
 
-#endif

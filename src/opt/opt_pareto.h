@@ -17,8 +17,7 @@ Notes:
 
    
 --*/
-#ifndef OPT_PARETO_H_
-#define OPT_PARETO_H_
+#pragma once
 
 #include "solver/solver.h"
 #include "model/model.h"
@@ -27,6 +26,7 @@ namespace opt {
    
     class pareto_callback {
     public:
+        virtual ~pareto_callback() = default;
         virtual unsigned num_objectives() = 0;
         virtual expr_ref mk_gt(unsigned i, model_ref& model) = 0;
         virtual expr_ref mk_ge(unsigned i, model_ref& model) = 0;
@@ -52,7 +52,7 @@ namespace opt {
             m_solver(s),
             m_params(p) {
         }
-        virtual ~pareto_base() {}
+        virtual ~pareto_base() = default;
         virtual void updt_params(params_ref & p) {
             m_solver->updt_params(p);
             m_params.copy(p);
@@ -87,7 +87,6 @@ namespace opt {
                    params_ref & p):
             pareto_base(m, cb, s, p) {            
         }
-        ~gia_pareto() override {}
 
         lbool operator()() override;
     };
@@ -101,10 +100,8 @@ namespace opt {
                    params_ref & p):
             pareto_base(m, cb, s, p) {            
         }
-        ~oia_pareto() override {}
 
         lbool operator()() override;
     };
 }
 
-#endif

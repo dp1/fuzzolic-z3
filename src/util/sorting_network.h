@@ -21,10 +21,9 @@ Notes:
 
 #include "util/vector.h"
 
-#ifndef SORTING_NETWORK_H_
-#define SORTING_NETWORK_H_
+#pragma once
 
-    enum sorting_network_encoding {
+    enum class sorting_network_encoding {
         sorted_at_most,
         grouped_at_most,
         bimander_at_most,
@@ -35,12 +34,12 @@ Notes:
 
     inline std::ostream& operator<<(std::ostream& out, sorting_network_encoding enc) {
         switch (enc) {
-        case grouped_at_most: return out << "grouped";
-        case bimander_at_most: return out << "bimander";
-        case ordered_at_most: return out << "ordered";
-        case sorted_at_most: return out << "sorted";
-        case unate_at_most: return out << "unate";
-        case circuit_at_most: return out << "circuit";
+        case sorting_network_encoding::grouped_at_most: return out << "grouped";
+        case sorting_network_encoding::bimander_at_most: return out << "bimander";
+        case sorting_network_encoding::ordered_at_most: return out << "ordered";
+        case sorting_network_encoding::sorted_at_most: return out << "sorted";
+        case sorting_network_encoding::unate_at_most: return out << "unate";
+        case sorting_network_encoding::circuit_at_most: return out << "circuit";
         }
         return out << "???";
     }
@@ -48,7 +47,7 @@ Notes:
     struct sorting_network_config {
         sorting_network_encoding m_encoding;
         sorting_network_config() {
-            m_encoding = sorted_at_most;
+            m_encoding = sorting_network_encoding::sorted_at_most;
         }
     };
 
@@ -242,22 +241,22 @@ Notes:
                 return mk_or(n, xs);
             }
             if (dualize(k, n, xs, in)) {
-                return le(full, k, in.size(), in.c_ptr());
+                return le(full, k, in.size(), in.data());
             }
             else {
                 switch (m_cfg.m_encoding) {
-                case sorted_at_most:
-                case bimander_at_most:
-                case ordered_at_most:
-                case grouped_at_most:
+                case sorting_network_encoding::sorted_at_most:
+                case sorting_network_encoding::bimander_at_most:
+                case sorting_network_encoding::ordered_at_most:
+                case sorting_network_encoding::grouped_at_most:
                     SASSERT(2*k <= n);
                     m_t = full?GE_FULL:GE;
                     // scoped_stats _ss(m_stats, k, n);
                     psort_nw<psort_expr>::card(k, n, xs, out);                
                     return out[k-1]; 
-                case unate_at_most:
+                case sorting_network_encoding::unate_at_most:
                     return unate_ge(full, k, n, xs);
-                case circuit_at_most:
+                case sorting_network_encoding::circuit_at_most:
                     return circuit_ge(full, k, n, xs); 
                 default:
                     UNREACHABLE();
@@ -273,20 +272,20 @@ Notes:
             SASSERT(k < n);
             literal_vector in, out;
             if (dualize(k, n, xs, in)) {
-                return ge(full, k, n, in.c_ptr());
+                return ge(full, k, n, in.data());
             }
             else if (k == 1) {
                 literal_vector ors;
                 // scoped_stats _ss(m_stats, k, n);
                 switch (m_cfg.m_encoding) {
-                case grouped_at_most:
-                case sorted_at_most:
-                case unate_at_most:
-                case circuit_at_most:
+                case sorting_network_encoding::grouped_at_most:
+                case sorting_network_encoding::sorted_at_most:
+                case sorting_network_encoding::unate_at_most:
+                case sorting_network_encoding::circuit_at_most:
                     return mk_at_most_1(full, n, xs, ors, false);
-                case bimander_at_most:
+                case sorting_network_encoding::bimander_at_most:
                     return mk_at_most_1_bimander(full, n, xs, ors);
-                case ordered_at_most:
+                case sorting_network_encoding::ordered_at_most:
                     return mk_ordered_atmost_1(full, n, xs);
                     
                 default:
@@ -296,18 +295,18 @@ Notes:
             }
             else {
                 switch (m_cfg.m_encoding) {
-                case sorted_at_most:
-                case bimander_at_most:
-                case ordered_at_most:
-                case grouped_at_most:
+                case sorting_network_encoding::sorted_at_most:
+                case sorting_network_encoding::bimander_at_most:
+                case sorting_network_encoding::ordered_at_most:
+                case sorting_network_encoding::grouped_at_most:
                     SASSERT(2*k <= n);
                     m_t = full?LE_FULL:LE;
                     // scoped_stats _ss(m_stats, k, n);
                     card(k + 1, n, xs, out);
                     return mk_not(out[k]);
-                case unate_at_most:
+                case sorting_network_encoding::unate_at_most:
                     return unate_le(full, k, n, xs); 
-                case circuit_at_most:
+                case sorting_network_encoding::circuit_at_most:
                     return circuit_le(full, k, n, xs); 
                 default:                    
                     UNREACHABLE();
@@ -323,7 +322,7 @@ Notes:
             SASSERT(k <= n);
             literal_vector in, out;
             if (dualize(k, n, xs, in)) {
-                return eq(full, k, n, in.c_ptr());
+                return eq(full, k, n, in.data());
             }
             else if (k == 1) {
                 // scoped_stats _ss(m_stats, k, n);
@@ -331,10 +330,10 @@ Notes:
             }
             else {
                 switch (m_cfg.m_encoding) {
-                case sorted_at_most:
-                case bimander_at_most:
-                case grouped_at_most:
-                case ordered_at_most:
+                case sorting_network_encoding::sorted_at_most:
+                case sorting_network_encoding::bimander_at_most:
+                case sorting_network_encoding::grouped_at_most:
+                case sorting_network_encoding::ordered_at_most:
                     // scoped_stats _ss(m_stats, k, n);
                     SASSERT(2*k <= n);
                     m_t = EQ;
@@ -346,9 +345,9 @@ Notes:
                     else {
                         return mk_min(out[k-1], mk_not(out[k]));
                     }
-                case unate_at_most:
+                case sorting_network_encoding::unate_at_most:
                     return unate_eq(k, n, xs);              
-                case circuit_at_most:
+                case sorting_network_encoding::circuit_at_most:
                     return circuit_eq(k, n, xs);        
                 default:                    
                     UNREACHABLE();
@@ -527,12 +526,12 @@ Notes:
                 ors.push_back(mk_and(x[i], mk_not(c),    mk_not(y[i])));
                 ors.push_back(mk_and(y[i], mk_not(c),    mk_not(x[i])));
                 ors.push_back(mk_and(c, x[i], y[i]));
-                literal o = mk_or(4, ors.c_ptr());
+                literal o = mk_or(4, ors.data());
                 out.push_back(o);
                 ors[0] = mk_and(c, x[i]); 
                 ors[1] = mk_and(c, y[i]);
                 ors[2] = mk_and(x[i], y[i]);                
-                c = mk_or(3, ors.c_ptr());                
+                c = mk_or(3, ors.data());                
             }
             return c;
         }
@@ -630,7 +629,7 @@ Notes:
             switch (j) {
             case 0:  return ctx.mk_false();
             case 1:  return ors[0];
-            default: return ctx.mk_max(ors.size(), ors.c_ptr());
+            default: return ctx.mk_max(ors.size(), ors.data());
             }
         }
 
@@ -644,7 +643,7 @@ Notes:
         }
 
         literal mk_or(literal_vector const& ors) {
-            return mk_or(ors.size(), ors.c_ptr());
+            return mk_or(ors.size(), ors.data());
         }
 
         literal mk_not(literal lit) {
@@ -689,7 +688,7 @@ Notes:
             case 2:
                 return mk_min(ands[0], ands[1]);
             default: {
-                return ctx.mk_min(ands.size(), ands.c_ptr());
+                return ctx.mk_min(ands.size(), ands.data());
             }
             }
         }
@@ -699,16 +698,16 @@ Notes:
             literal_vector ors;
             literal r1;
             switch (m_cfg.m_encoding) {
-            case grouped_at_most:
-            case sorted_at_most:
-            case unate_at_most:
-            case circuit_at_most:
+            case sorting_network_encoding::grouped_at_most:
+            case sorting_network_encoding::sorted_at_most:
+            case sorting_network_encoding::unate_at_most:
+            case sorting_network_encoding::circuit_at_most:
                 r1 = mk_at_most_1(full, n, xs, ors, true);
                 break;
-            case bimander_at_most:
+            case sorting_network_encoding::bimander_at_most:
                 r1 = mk_at_most_1_bimander(full, n, xs, ors);                
                 break;
-            case ordered_at_most:
+            case sorting_network_encoding::ordered_at_most:
                 return mk_ordered_exactly_1(full, n, xs);
             default:
                 UNREACHABLE();
@@ -719,7 +718,7 @@ Notes:
                 r1 = mk_and(r1, mk_or(ors));
             }
             else {
-                add_implies_or(r1, ors.size(), ors.c_ptr());
+                add_implies_or(r1, ors.size(), ors.data());
             }
             return r1;
         }
@@ -739,9 +738,9 @@ Notes:
                 if (n + 1 == inc_size) ++inc_size;
                 for (unsigned i = 0; i < n; i += inc_size) {       
                     unsigned inc = std::min(n - i, inc_size);
-                    mk_at_most_1_small(full, inc, in.c_ptr() + i, result, ands);
+                    mk_at_most_1_small(full, inc, in.data() + i, result, ands);
                     if (use_ors || n > inc_size) {
-                        ors.push_back(mk_or(inc, in.c_ptr() + i));
+                        ors.push_back(mk_or(inc, in.data() + i));
                     }
                 }
                 if (n <= inc_size) {
@@ -903,8 +902,8 @@ Notes:
             literal_vector ands;
             for (unsigned i = 0; i < n; i += inc_size) {                    
                 unsigned inc = std::min(n - i, inc_size);
-                mk_at_most_1_small(full, inc, in.c_ptr() + i, result, ands);
-                ors.push_back(mk_or(inc, in.c_ptr() + i));
+                mk_at_most_1_small(full, inc, in.data() + i, result, ands);
+                ors.push_back(mk_or(inc, in.data() + i));
             }
             
             unsigned nbits = 0;
@@ -990,7 +989,7 @@ Notes:
             add_clause(2, lits);
         }
         void add_clause(literal_vector const& lits) {
-            add_clause(lits.size(), lits.c_ptr());
+            add_clause(lits.size(), lits.data());
         }
         void add_clause(unsigned n, literal const* ls) {
             for (unsigned i = 0; i < n; ++i) {
@@ -999,7 +998,7 @@ Notes:
             m_stats.m_num_compiled_clauses++;
             m_stats.m_num_clause_vars += n;
             literal_vector tmp(n, ls);
-            ctx.mk_clause(n, tmp.c_ptr());
+            ctx.mk_clause(n, tmp.data());
         }
 
         // y1 <= mk_max(x1,x2)
@@ -1049,7 +1048,7 @@ Notes:
                 unsigned half = n/2; // TBD
                 card(k, half, xs, out1);
                 card(k, n-half, xs + half, out2);
-                smerge(k, out1.size(), out1.c_ptr(), out2.size(), out2.c_ptr(), out);
+                smerge(k, out1.size(), out1.data(), out2.size(), out2.data(), out);
             }
             TRACE("pb_verbose", tout << "card k: " << k << " n: " << n << "\n";
                   //pp(tout << "in:", n, xs) << "\n";
@@ -1110,10 +1109,10 @@ Notes:
                 split(b, bs, even_b, odd_b);
                 SASSERT(!even_a.empty());
                 SASSERT(!even_b.empty());
-                merge(even_a.size(), even_a.c_ptr(),
-                      even_b.size(), even_b.c_ptr(), out1);
-                merge(odd_a.size(), odd_a.c_ptr(),
-                      odd_b.size(), odd_b.c_ptr(), out2);
+                merge(even_a.size(), even_a.data(),
+                      even_b.size(), even_b.data(), out1);
+                merge(odd_a.size(), odd_a.data(),
+                      odd_b.size(), odd_b.data(), out2);
                 interleave(out1, out2, out); 
             }
             TRACE("pb_verbose", tout << "merge a: " << a << " b: " << b << " ";
@@ -1214,8 +1213,8 @@ Notes:
                     unsigned half = n/2;  // TBD
                     sorting(half, xs, out1);
                     sorting(n-half, xs+half, out2);
-                    merge(out1.size(), out1.c_ptr(), 
-                          out2.size(), out2.c_ptr(),
+                    merge(out1.size(), out1.data(), 
+                          out2.size(), out2.data(),
                           out);                
                 }
                 break;
@@ -1306,10 +1305,10 @@ Notes:
                 else {
                     c1 = (c + 1)/2; c2 = (c - 1)/2;
                 }
-                smerge(c1, even_a.size(), even_a.c_ptr(),
-                       even_b.size(), even_b.c_ptr(), out1);
-                smerge(c2, odd_a.size(), odd_a.c_ptr(),
-                       odd_b.size(), odd_b.c_ptr(), out2);
+                smerge(c1, even_a.size(), even_a.data(),
+                       even_b.size(), even_b.data(), out1);
+                smerge(c2, odd_a.size(), odd_a.data(),
+                       odd_b.size(), odd_b.data(), out2);
                 SASSERT(out1.size() == std::min(even_a.size()+even_b.size(), c1));
                 SASSERT(out2.size() == std::min(odd_a.size()+odd_b.size(), c2));
                 literal y;
@@ -1499,4 +1498,3 @@ Notes:
         }
     };
 
-#endif

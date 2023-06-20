@@ -25,7 +25,7 @@ Revision History:
     Let x_i, y_i, z_i be indices into the vectors x, y, z.
 
     Suppose that positions in P and R are annotated with what is
-    slicable.
+    sliceable.
 
     Sufficient conditions for sliceability:
 
@@ -43,9 +43,9 @@ Revision History:
       and the positions where z_i is used in P and R are sliceable
 
 
-    A more refined approach may be using Gaussean elimination based
+    A more refined approach may be using Gaussian elimination based
     on x,z and eliminating variables from x,y (expressing them in terms
-    of a disjoint subeset of x,z).
+    of a disjoint subset of x,z).
 
 
 --*/
@@ -110,8 +110,6 @@ namespace datalog {
         obj_map<proof, proof*> m_new_proof;
         rule_unifier           m_unifier;
 
-
-        slice_proof_converter(slice_proof_converter const& other);
 
         void init_form2rule() {
             if (!m_sliceform2rule.empty()) {
@@ -240,7 +238,7 @@ namespace datalog {
                 r1 = r3;
             }
             rm.to_formula(*r1.get(), concl);
-            proof* new_p = m.mk_hyper_resolve(premises.size(), premises.c_ptr(), concl, positions, substs);
+            proof* new_p = m.mk_hyper_resolve(premises.size(), premises.data(), concl, positions, substs);
             m_pinned_exprs.push_back(new_p);
             m_pinned_rules.push_back(r1.get());
             TRACE("dl", 
@@ -262,7 +260,9 @@ namespace datalog {
             rm(ctx.get_rule_manager()),
             m_pinned_rules(rm),
             m_pinned_exprs(m),
-            m_unifier(ctx) {}
+            m_unifier(ctx) {
+            (void)m_ctx;
+        }
 
         void insert(rule* orig_rule, rule* slice_rule, unsigned sz, unsigned const* renaming) {
             m_rule2slice.insert(orig_rule, slice_rule);
@@ -270,6 +270,8 @@ namespace datalog {
             m_pinned_rules.push_back(slice_rule);
             m_renaming.insert(orig_rule, unsigned_vector(sz, renaming));
         }
+
+        slice_proof_converter(slice_proof_converter const& other) = delete;
 
         proof_ref operator()(ast_manager& m, unsigned num_source, proof * const * source) override {
             SASSERT(num_source == 1);
@@ -352,7 +354,7 @@ namespace datalog {
                     }
                     if (!new_fi->is_partial()) {
                         TRACE("dl", tout << mk_pp(new_fi->get_else(), m) << "\n";);
-                        tmp = vs(new_fi->get_else(), subst.size(), subst.c_ptr());
+                        tmp = vs(new_fi->get_else(), subst.size(), subst.data());
                         old_fi->set_else(tmp);
                     }
                     unsigned num_entries = new_fi->num_entries();
@@ -362,7 +364,7 @@ namespace datalog {
                         func_entry const* e = new_fi->get_entry(j);
                         for (unsigned k = 0, l = 0; k < old_p->get_arity(); ++k) {
                             if (!is_sliced.get(k)) {
-                                tmp = vs(e->get_arg(l++), subst.size(), subst.c_ptr());
+                                tmp = vs(e->get_arg(l++), subst.size(), subst.data());
                                 args.push_back(tmp);
                             }
                             else {
@@ -370,8 +372,8 @@ namespace datalog {
                             }
                             SASSERT(l <= new_p->get_arity());
                         }
-                        res = vs(e->get_result(), subst.size(), subst.c_ptr());
-                        old_fi->insert_entry(args.c_ptr(), res.get());
+                        res = vs(e->get_result(), subst.size(), subst.data());
+                        old_fi->insert_entry(args.data(), res.get());
                     }
                     old_model->register_decl(old_p, old_fi);
                 }
@@ -441,7 +443,7 @@ namespace datalog {
 
     void mk_slice::filter_unique_vars(rule& r) {
         // 
-        // Variables that occur in multiple uinterpreted predicates are not sliceable.
+        // Variables that occur in multiple uninterpreted predicates are not sliceable.
         // 
         uint_set used_vars;
         for (unsigned j = 0; j < r.get_uninterpreted_tail_size(); ++j) {
@@ -466,7 +468,7 @@ namespace datalog {
         expr_ref_vector conjs = get_tail_conjs(r);
         for (expr * e : conjs) {
             expr_ref r(m);
-            unsigned v;
+            unsigned v = 0;
             if (is_eq(e, v, r) && is_output(v) && m_var_is_sliceable[v]) {
                 TRACE("dl", tout << "is_eq: " << mk_pp(e, m) << " " << (m_solved_vars[v].get()?"solved":"new") << "\n";);
                 add_var(v);
@@ -731,7 +733,7 @@ namespace datalog {
                 }
             }
             if (domain.size() < bv.size()) {
-                f = m_ctx.mk_fresh_head_predicate(p->get_name(), symbol("slice"), domain.size(), domain.c_ptr(), p);
+                f = m_ctx.mk_fresh_head_predicate(p->get_name(), symbol("slice"), domain.size(), domain.data(), p);
                 m_pinned.push_back(f);
                 m_predicates.insert(p, f);
                 dst.inherit_predicate(src, p, f);
@@ -768,7 +770,7 @@ namespace datalog {
                     args.push_back(p->get_arg(i));
                 }
             }
-            q = m.mk_app(qd, args.size(), args.c_ptr());
+            q = m.mk_app(qd, args.size(), args.data());
         }
         else {
             q = p;
@@ -797,7 +799,7 @@ namespace datalog {
                 tail.push_back(to_app(e));                
             }
                         
-            new_rule = rm.mk(head.get(), tail.size(), tail.c_ptr(), (const bool*) nullptr, r.name());
+            new_rule = rm.mk(head.get(), tail.size(), tail.data(), (const bool*) nullptr, r.name());
 
             rm.fix_unbound_vars(new_rule, false);
 
@@ -841,11 +843,10 @@ namespace datalog {
         m_mc = smc.get();
         reset();
         saturate(src);
-        rule_set* result = alloc(rule_set, m_ctx);
+        scoped_ptr<rule_set> result = alloc(rule_set, m_ctx);
         declare_predicates(src, *result);
         if (m_predicates.empty()) {
             // nothing could be sliced.
-            dealloc(result);
             return nullptr;
         }
         TRACE("dl", display(tout););        
@@ -859,7 +860,7 @@ namespace datalog {
         }
         m_ctx.add_proof_converter(spc.get());
         m_ctx.add_model_converter(smc.get());
-        return result;
+        return result.detach();
     }    
 
 };

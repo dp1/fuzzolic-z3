@@ -14,6 +14,7 @@ Copyright (c) 2015 Microsoft Corporation
 #include "model/model_smt2_pp.h"
 #include "smt/smt_kernel.h"
 #include "smt/params/smt_params.h"
+#include <iostream>
 
 struct ast_ext {
     ast_manager& m;
@@ -196,7 +197,7 @@ static void test_eq1(unsigned n, sorting_network_encoding enc) {
 
     // equality:
     solver.push();
-    result1 = sn.eq(true, 1, in.size(), in.c_ptr());
+    result1 = sn.eq(true, 1, in.size(), in.data());
     for (expr* cls : ext.m_clauses) {
         solver.assert_expr(cls);
     }
@@ -242,7 +243,7 @@ static void test_sorting_eq(unsigned n, unsigned k, sorting_network_encoding enc
     // equality:
     std::cout << "eq " << k << " out of " << n << " for encoding " << enc << "\n";
     solver.push();
-    result = sn.eq(false, k, in.size(), in.c_ptr());
+    result = sn.eq(false, k, in.size(), in.data());
     solver.assert_expr(result);
     for (expr* cl : ext.m_clauses) {
         solver.assert_expr(cl);
@@ -297,7 +298,7 @@ static void test_sorting_le(unsigned n, unsigned k, sorting_network_encoding enc
     // B <= k
     std::cout << "le " << k << "\n";
     solver.push();
-    result = sn.le(false, k, in.size(), in.c_ptr());
+    result = sn.le(false, k, in.size(), in.data());
     solver.assert_expr(result);
     for (expr* cls : ext.m_clauses) {
         solver.assert_expr(cls);
@@ -355,7 +356,7 @@ void test_sorting_ge(unsigned n, unsigned k, sorting_network_encoding enc) {
     // k <= B
     std::cout << "ge " << k << "\n";
     solver.push();
-    result = sn.ge(false, k, in.size(), in.c_ptr());
+    result = sn.ge(false, k, in.size(), in.data());
     solver.assert_expr(result);
     for (expr* cls : ext.m_clauses) {
         solver.assert_expr(cls);
@@ -416,7 +417,7 @@ void test_at_most_1(unsigned n, bool full, sorting_network_encoding enc) {
     psort_nw<ast_ext2> sn(ext);
     sn.cfg().m_encoding = enc;
     expr_ref result1(m), result2(m);
-    result1 = sn.le(full, 1, in.size(), in.c_ptr());
+    result1 = sn.le(full, 1, in.size(), in.data());
     result2 = naive_at_most1(in);
 
 
@@ -494,7 +495,7 @@ static void test_at_most1(sorting_network_encoding enc) {
     psort_nw<ast_ext2> sn(ext);
     sn.cfg().m_encoding = enc;
     expr_ref result(m);
-    result = sn.le(true, 1, in.size(), in.c_ptr());
+    result = sn.le(true, 1, in.size(), in.data());
     //std::cout << result << "\n";
     //std::cout << ext.m_clauses << "\n";
 }
@@ -557,7 +558,7 @@ static void test_pb(unsigned max_w, unsigned sz, unsigned_vector& ws) {
             solver.push();
             //std::cout << "bound: " << k << "\n";
             //std::cout << ws << " " << xs << "\n";
-            ge = sn.ge(k, sz, ws.c_ptr(), xs.c_ptr());
+            ge = sn.ge(k, sz, ws.data(), xs.data());
             //std::cout << "ge: " << ge << "\n";            
             for (expr* cls : ext.m_clauses) {
                 solver.assert_expr(cls);
@@ -606,7 +607,7 @@ static void test_pb(unsigned max_w, unsigned sz, unsigned_vector& ws) {
             solver.pop(1);
 
             solver.push();
-            eq = sn.eq(k, sz, ws.c_ptr(), xs.c_ptr());
+            eq = sn.eq(k, sz, ws.data(), xs.data());
 
             for (expr* cls : ext.m_clauses) {
                 solver.assert_expr(cls);

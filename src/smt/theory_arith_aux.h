@@ -16,14 +16,13 @@ Author:
 Revision History:
 
 --*/
-#ifndef THEORY_ARITH_AUX_H_
-#define THEORY_ARITH_AUX_H_
+#pragma once
 
 #include "util/inf_eps_rational.h"
 #include "smt/theory_arith.h"
 #include "smt/smt_farkas_util.h"
 #include "ast/rewriter/th_rewriter.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 
 namespace smt {
 
@@ -360,7 +359,7 @@ namespace smt {
         if (empty()) return nullptr;
         init();
         m_params[0] = parameter(symbol(name));
-        return m_params.c_ptr();
+        return m_params.data();
     }
 
     // -----------------------------------
@@ -419,7 +418,7 @@ namespace smt {
         literal l(get_bool_var(), !m_is_true);
         // out << "v" << bound::get_var() << " " << bound::get_bound_kind() << " " << get_k() << " ";
         // out << l << ":";
-        th.get_context().display_detailed_literal(out, l);
+        th.ctx.display_detailed_literal(out, l);
     }
 
     // -----------------------------------
@@ -431,8 +430,8 @@ namespace smt {
     template<typename Ext>
     void theory_arith<Ext>::eq_bound::display(theory_arith<Ext> const& th, std::ostream& out) const {        
         ast_manager& m = th.get_manager();
-        out << "#" << m_lhs->get_owner_id() << " " << mk_pp(m_lhs->get_owner(), m) << " = "
-            << "#" << m_rhs->get_owner_id() << " " << mk_pp(m_rhs->get_owner(), m);
+        out << "#" << m_lhs->get_owner_id() << " " << mk_pp(m_lhs->get_expr(), m) << " = "
+            << "#" << m_rhs->get_owner_id() << " " << mk_pp(m_rhs->get_expr(), m);
     }
 
     // -----------------------------------
@@ -468,7 +467,7 @@ namespace smt {
         SASSERT(upper  || new_bound->get_bound_kind() == B_LOWER);
         theory_var v = new_bound->get_var();
         set_bound_core(v, new_bound, upper);
-        if ((propagate_eqs() || propagate_diseqs()) && is_fixed(v))
+        if ((propagate_eqs() || propagate_diseqs()) && is_fixed(v)) 
             fixed_var_eh(v);
     }
     
@@ -747,8 +746,8 @@ namespace smt {
                 a.push_eq(e, coeff, proofs_enabled);
         }
         else {
-            a.append(m_lits.size(), m_lits.c_ptr());
-            a.append(m_eqs.size(),  m_eqs.c_ptr());
+            a.append(m_lits.size(), m_lits.data());
+            a.append(m_eqs.size(),  m_eqs.data());
         }
     }
 
@@ -762,11 +761,11 @@ namespace smt {
             enode* a = e.first;
             enode* b = e.second;
             out << " ";
-            out << "#" << a->get_owner_id() << " " << mk_pp(a->get_owner(), m) << " = "
-                << "#" << b->get_owner_id() << " " << mk_pp(b->get_owner(), m) << "\n";
+            out << "#" << a->get_owner_id() << " " << mk_pp(a->get_expr(), m) << " = "
+                << "#" << b->get_owner_id() << " " << mk_pp(b->get_expr(), m) << "\n";
         }
         for (literal l : m_lits) {
-            out << l << ":"; th.get_context().display_detailed_literal(out, l) << "\n";           
+            out << l << ":"; th.ctx.display_detailed_literal(out, l) << "\n";           
         }
     }
 
@@ -964,7 +963,6 @@ namespace smt {
     template<typename Ext>
     bool theory_arith<Ext>::is_safe_to_leave(theory_var x, bool inc, bool& has_int, bool& shared) {
         
-        context& ctx = get_context();
         shared |= ctx.is_shared(get_enode(x));
         column & c      = m_columns[x];
         typename svector<col_entry>::iterator it  = c.begin_entries();
@@ -1023,7 +1021,6 @@ namespace smt {
             return false;
         }
         else {
-            context & ctx = get_context();
             SASSERT(ctx.e_internalized(n));
             enode * e    = ctx.get_enode(n);
             if (is_attached_to_var(e)) {
@@ -1059,6 +1056,8 @@ namespace smt {
     template<typename Ext>
     inf_eps_rational<inf_rational> theory_arith<Ext>::maximize(theory_var v, expr_ref& blocker, bool& has_shared) {
         TRACE("bound_bug", display_var(tout, v); display(tout););
+        if (ctx.get_fparams().m_threads > 1)
+            throw default_exception("multi-threaded optimization is not supported");
         has_shared = false;
         if (!m_nl_monomials.empty()) {
             has_shared = true;
@@ -1087,22 +1086,22 @@ namespace smt {
     expr_ref theory_arith<Ext>::mk_gt(theory_var v) {
         ast_manager& m = get_manager();
         inf_numeral const& val = get_value(v);
-        expr* obj = get_enode(v)->get_owner();
+        expr* obj = get_enode(v)->get_expr();
         expr_ref e(m);
         rational r = val.get_rational();
-        if (m_util.is_int(m.get_sort(obj))) {
+        if (m_util.is_int(obj->get_sort())) {
             if (r.is_int()) {
                 r += rational::one();
             }
             else {
                 r = ceil(r);
             }
-            e = m_util.mk_numeral(r, m.get_sort(obj));
+            e = m_util.mk_numeral(r, obj->get_sort());
             e = m_util.mk_ge(obj, e);
         }
         else {
             // obj is over the reals.
-            e = m_util.mk_numeral(r, m.get_sort(obj));
+            e = m_util.mk_numeral(r, obj->get_sort());
             
             if (val.get_infinitesimal().is_neg()) {
                 e = m_util.mk_ge(obj, e);
@@ -1124,10 +1123,9 @@ namespace smt {
     template<typename Ext>
     expr_ref theory_arith<Ext>::mk_ge(generic_model_converter& fm, theory_var v, inf_numeral const& val) {
         ast_manager& m = get_manager();
-        context& ctx = get_context();
         std::ostringstream strm;
-        strm << val << " <= " << mk_pp(get_enode(v)->get_owner(), get_manager());
-        app* b = m.mk_const(symbol(strm.str().c_str()), m.mk_bool_sort());
+        strm << val << " <= " << mk_pp(get_enode(v)->get_expr(), get_manager());
+        app* b = m.mk_const(symbol(strm.str()), m.mk_bool_sort());
         expr_ref result(b, m);
         TRACE("opt", tout << result << "\n";);
         if (!ctx.b_internalized(b)) {
@@ -1153,10 +1151,9 @@ namespace smt {
      */
     template<typename Ext>
     void theory_arith<Ext>::enable_record_conflict(expr* bound) {
-        m_params.m_arith_bound_prop = BP_NONE;
-        SASSERT(propagation_mode() == BP_NONE); // bound propagation rules are not (yet) handled.
+        m_params.m_arith_bound_prop = bound_prop_mode::BP_NONE;
+        SASSERT(propagation_mode() == bound_prop_mode::BP_NONE); // bound propagation rules are not (yet) handled.
         if (bound) {
-            context& ctx = get_context();
             m_bound_watch = ctx.get_bool_var(bound);
         }
         else {
@@ -1187,7 +1184,6 @@ namespace smt {
         unsigned num_eqs, enode_pair const * eqs,
         unsigned num_params, parameter* params) {
         ast_manager& m = get_manager();
-        context& ctx = get_context();
         expr_ref tmp(m), vq(m);
         expr* x, *y, *e;
         if (null_bool_var == m_bound_watch) {
@@ -1201,7 +1197,7 @@ namespace smt {
                 break;
             }
         }
-        if (idx == num_lits) {
+        if (idx == num_lits || num_params == 0) {
             return;
         }
         for (unsigned i = 0; i < num_lits; ++i) {
@@ -1209,8 +1205,8 @@ namespace smt {
         }
         for (unsigned i = 0; i < num_eqs; ++i) {
             enode_pair const& p = eqs[i];
-            x = p.first->get_owner();
-            y = p.second->get_owner();
+            x = p.first->get_expr();
+            y = p.second->get_expr();
             tmp = m.mk_eq(x,y);
         }
 
@@ -1227,18 +1223,21 @@ namespace smt {
                 continue;
             }
             ctx.literal2expr(lits[i], tmp);
-            farkas.add(abs(pa.get_rational()), to_app(tmp));
+            if (!farkas.add(abs(pa.get_rational()), to_app(tmp)))
+                return;
         }
         for (unsigned i = 0; i < num_eqs; ++i) {
             enode_pair const& p = eqs[i];
-            x = p.first->get_owner();
-            y = p.second->get_owner();
+            x = p.first->get_expr();
+            y = p.second->get_expr();
             tmp = m.mk_eq(x,y);
             parameter const& pa = params[1 + num_lits + i];
             SASSERT(pa.is_rational());
-            farkas.add(abs(pa.get_rational()), to_app(tmp));
+            if (!farkas.add(abs(pa.get_rational()), to_app(tmp)))
+                return;
         }
         tmp = farkas.get();
+
         if (m.has_trace_stream()) {
             log_axiom_instantiation(tmp);
             m.trace_stream() << "[end-of-instance]\n";
@@ -1274,8 +1273,7 @@ namespace smt {
         }
         th_rewriter rw(m);
         rw(vq, tmp);
-        VERIFY(m_util.is_numeral(tmp, q));
-        if (m_upper_bound < q) {
+        if (m_util.is_numeral(tmp, q) && m_upper_bound < q) {
             m_upper_bound = q;
             if (strict) {
                 m_upper_bound -= get_epsilon(a->get_var());
@@ -1328,7 +1326,6 @@ namespace smt {
         bool& has_shared,      // determine if pivot involves shared variable
         theory_var& x_i) {     // base variable to pivot with x_j
 
-        context& ctx = get_context();
         x_i = null_theory_var;
         init_gains(x_j, inc, min_gain, max_gain);
         has_shared |= ctx.is_shared(get_enode(x_j));
@@ -1513,7 +1510,6 @@ namespace smt {
     template<typename Ext>
     bool theory_arith<Ext>::has_interface_equality(theory_var x) {
         theory_var num = get_num_vars();
-        context& ctx = get_context();
         enode* r = get_enode(x)->get_root();
         for (theory_var v = 0; v < num; v++) {
             if (v == x) continue;
@@ -1539,7 +1535,7 @@ namespace smt {
         m_stats.m_max_min++;
         unsigned best_efforts = 0;
         bool inc = false;
-        context& ctx = get_context();
+
 
         SASSERT(!maintain_integrality || valid_assignment());
         SASSERT(satisfy_bounds());
@@ -1759,7 +1755,7 @@ namespace smt {
             theory_var s  = r.get_base_var();
             numeral const & coeff = r[it->m_row_idx].m_coeff;
             update_gains(inc, s, coeff, min_gain, max_gain);
-            has_shared |= get_context().is_shared(get_enode(s));
+            has_shared |= ctx.is_shared(get_enode(s));
         }
         bool result = false;
         if (safe_gain(min_gain, max_gain)) {
@@ -1802,7 +1798,7 @@ namespace smt {
     */
     template<typename Ext>
    typename theory_arith<Ext>::max_min_t theory_arith<Ext>::max_min(theory_var v, bool max, bool maintain_integrality, bool& has_shared) {
-        expr* e = get_enode(v)->get_owner();
+        expr* e = get_enode(v)->get_expr();
         (void)e;
         SASSERT(!maintain_integrality || valid_assignment());
         SASSERT(satisfy_bounds());
@@ -2141,6 +2137,8 @@ namespace smt {
                 candidates.push_back(other);
             }
         }
+        TRACE("arith_rand", tout << "candidates.size() == " << candidates.size() << "\n";);
+
         if (candidates.empty())
             return;
         m_tmp_var_set.reset();
@@ -2178,10 +2176,10 @@ namespace smt {
         enode * r      = n->get_root();
         enode_vector::const_iterator it  = r->begin_parents();
         enode_vector::const_iterator end = r->end_parents();
-        TRACE("shared", tout << get_context().get_scope_level() << " " <<  v << " " << r->get_num_parents() << "\n";);
+        TRACE("shared", tout << ctx.get_scope_level() << " " <<  v << " " << r->get_num_parents() << "\n";);
         for (; it != end; ++it) {
             enode * parent = *it;
-            app *   o = parent->get_owner();
+            app *   o = parent->get_expr();
             if (o->get_family_id() == get_id()) {
                 switch (o->get_decl_kind()) {
                 case OP_DIV:
@@ -2211,7 +2209,7 @@ namespace smt {
         int num       = get_num_vars();
         for (theory_var v = 0; v < num; v++) {
             enode * n        = get_enode(v);
-            TRACE("func_interp_bug", tout << mk_pp(n->get_owner(), get_manager()) << " -> " << m_value[v] << " root #" << n->get_root()->get_owner_id() << " " << is_relevant_and_shared(n) << "\n";);
+            TRACE("func_interp_bug", tout << mk_pp(n->get_expr(), get_manager()) << " -> " << m_value[v] << " root #" << n->get_root()->get_owner_id() << " " << is_relevant_and_shared(n) << "\n";);
             if (!is_relevant_and_shared(n)) {
                 continue;
             }
@@ -2225,14 +2223,13 @@ namespace smt {
                 continue;
             }
             TRACE("func_interp_bug", tout << "adding to assume_eq queue #" << n->get_owner_id() << " #" << n2->get_owner_id() << "\n";);
-            m_assume_eq_candidates.push_back(std::make_pair(other, v));
+            m_assume_eq_candidates.push_back({ other , v }); 
             result = true;
         }
 
         if (result)
-            get_context().push_trail(restore_size_trail<context, std::pair<theory_var, theory_var>, false>(m_assume_eq_candidates, old_sz));
+            ctx.push_trail(restore_vector(m_assume_eq_candidates, old_sz));
         return delayed_assume_eqs();
-        // return this->assume_eqs(m_var_value_table);
     }
 
     template<typename Ext>
@@ -2240,19 +2237,20 @@ namespace smt {
         if (m_assume_eq_head == m_assume_eq_candidates.size())
             return false;
 
-        get_context().push_trail(value_trail<context, unsigned>(m_assume_eq_head));
+        ctx.push_trail(value_trail<unsigned>(m_assume_eq_head));
         while (m_assume_eq_head < m_assume_eq_candidates.size()) {
-            std::pair<theory_var, theory_var> const & p = m_assume_eq_candidates[m_assume_eq_head];
-            theory_var v1 = p.first;
-            theory_var v2 = p.second;
+            auto const& [v1, v2] = m_assume_eq_candidates[m_assume_eq_head];
+            enode* n1 = get_enode(v1);
+            enode* n2 = get_enode(v2);
             m_assume_eq_head++;
             CTRACE("func_interp_bug", 
                    get_value(v1) == get_value(v2) && 
-                   get_enode(v1)->get_root() != get_enode(v2)->get_root(),
-                   tout << "assuming eq: #" << get_enode(v1)->get_owner_id() << " = #" << get_enode(v2)->get_owner_id() << "\n";);
+                   n1->get_root() != n2->get_root(),
+                   tout << "assuming eq: #" << n1->get_owner_id() << " = #" << n2->get_owner_id() << "\n";);
             if (get_value(v1) == get_value(v2) && 
-                get_enode(v1)->get_root() != get_enode(v2)->get_root() &&
-                assume_eq(get_enode(v1), get_enode(v2))) {
+                n1->get_root() != n2->get_root() &&
+                assume_eq(n1, n2)) {
+                ++m_stats.m_assume_eqs;
                 return true;
             }
         }
@@ -2291,5 +2289,4 @@ namespace smt {
 
 };
 
-#endif /* THEORY_ARITH_AUX_H_ */
 

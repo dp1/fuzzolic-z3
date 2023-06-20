@@ -82,7 +82,7 @@ namespace datalog {
                 was_added = true;
                 func_decl* orig = decls_buf[0];
                 func_decl* product_pred = m_ctx.mk_fresh_head_predicate(new_name,
-                    symbol::null, domain.size(), domain.c_ptr(), orig);
+                    symbol::null, domain.size(), domain.data(), orig);
                 m_cache.insert(new_name, product_pred);
             }
             return;
@@ -101,7 +101,7 @@ namespace datalog {
         app_ref replacing = product_application(apps);
 
         ptr_vector<app> new_tail;
-        svector<bool> new_tail_neg;
+        bool_vector new_tail_neg;
         unsigned n = r.get_tail_size() - apps.size() + 1;
         unsigned tail_idx = 0;
         new_tail.resize(n);
@@ -130,7 +130,7 @@ namespace datalog {
 
         rule_ref new_rule(rm);
         new_rule = rm.mk(r.get_head(), tail_idx + 1,
-            new_tail.c_ptr(), new_tail_neg.c_ptr(), symbol::null, false);
+            new_tail.data(), new_tail_neg.data(), symbol::null, false);
         rules.replace_rule(&r, new_rule.get());
     }
 
@@ -150,7 +150,7 @@ namespace datalog {
 
         rule_ref new_rule(rm);
         new_rule = rm.mk(r);
-        rm.substitute(new_rule, revsub.size(), revsub.c_ptr());
+        rm.substitute(new_rule, revsub.size(), revsub.data());
         return new_rule;
     }
 
@@ -176,7 +176,7 @@ namespace datalog {
 
     void mk_synchronize::add_rec_tail(vector< ptr_vector<app> > & recursive_calls,
                                       app_ref_vector & new_tail,
-                                      svector<bool> & new_tail_neg,
+                                      bool_vector & new_tail_neg,
                                       unsigned & tail_idx) {
         unsigned max_sz = 0;
         for (auto &rc : recursive_calls)
@@ -200,7 +200,7 @@ namespace datalog {
     }
 
     void mk_synchronize::add_non_rec_tail(rule & r, app_ref_vector & new_tail,
-                                          svector<bool> & new_tail_neg,
+                                          bool_vector & new_tail_neg,
                                           unsigned & tail_idx) {
         for (unsigned i = 0, sz = r.get_positive_tail_size(); i < sz; ++i) {
             app* tail = r.get_tail(i);
@@ -246,7 +246,7 @@ namespace datalog {
                 args[idx] = a->get_arg(i);
         }
 
-        return app_ref(m.mk_app(pred, args_num, args.c_ptr()), m);
+        return app_ref(m.mk_app(pred, args_num, args.data()), m);
     }
 
     rule_ref mk_synchronize::product_rule(rule_ref_vector const & rules) {
@@ -287,7 +287,7 @@ namespace datalog {
         }
 
         app_ref_vector new_tail(m);
-        svector<bool> new_tail_neg;
+        bool_vector new_tail_neg;
         new_tail.resize(product_tail_length);
         new_tail_neg.resize(product_tail_length);
         unsigned tail_idx = -1;
@@ -302,7 +302,7 @@ namespace datalog {
 
         rule_ref new_rule(rm);
         new_rule = rm.mk(product_head, tail_idx + 1,
-            new_tail.c_ptr(), new_tail_neg.c_ptr(), symbol(buffer.c_str()), false);
+            new_tail.data(), new_tail_neg.data(), symbol(buffer.c_str()), false);
         rm.fix_unbound_vars(new_rule, false);
         return new_rule;
     }

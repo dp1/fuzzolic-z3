@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef NLSAT_ASSIGNMENT_H_
-#define NLSAT_ASSIGNMENT_H_
+#pragma once
 
 #include "nlsat/nlsat_types.h"
 #include "math/polynomial/algebraic_numbers.h"
@@ -30,10 +29,9 @@ namespace nlsat {
     */
     class assignment : public polynomial::var2anum {
         scoped_anum_vector m_values;
-        svector<bool>      m_assigned;
+        bool_vector      m_assigned;
     public:
         assignment(anum_manager & _m):m_values(_m) {}
-        virtual ~assignment() {}
         anum_manager & am() const { return m_values.m(); }
         void swap(assignment & other) {
             m_values.swap(other.m_values);
@@ -101,4 +99,3 @@ namespace nlsat {
     };
 };
 
-#endif

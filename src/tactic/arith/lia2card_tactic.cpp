@@ -24,8 +24,8 @@ Notes:
 #include "ast/ast_util.h"
 #include "ast/ast_pp_util.h"
 #include "tactic/tactical.h"
-#include "tactic/arith/bound_manager.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/simplifiers/bound_manager.h"
+#include "ast/converters/generic_model_converter.h"
 
 class lia2card_tactic : public tactic {
 
@@ -57,7 +57,7 @@ class lia2card_tactic : public tactic {
 
         bool is_le(expr* x, expr* y, expr_ref& result) {
             if (is_pb(x, y, args, coeffs, coeff)) {
-                result = t.mk_le(coeffs.size(), coeffs.c_ptr(), args.c_ptr(), -coeff);
+                result = t.mk_le(coeffs.size(), coeffs.data(), args.data(), -coeff);
                 return true;
             }
             else {
@@ -77,7 +77,7 @@ class lia2card_tactic : public tactic {
                 result = m.mk_not(result);
             }
             else if (m.is_eq(f) && is_pb(es[0], es[1], args, coeffs, coeff)) {
-                result = t.mk_eq(coeffs.size(), coeffs.c_ptr(), args.c_ptr(), -coeff);
+                result = t.mk_eq(coeffs.size(), coeffs.data(), args.data(), -coeff);
             }
             else {
                 return BR_FAILED;
@@ -132,9 +132,11 @@ public:
         dealloc(m_todo);
     }
 
+    char const* name() const override { return "lia2card"; }
+
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        m_compile_equality = p.get_bool("compile_equality", true);
+        m_params.append(p);
+        m_compile_equality = m_params.get_bool("compile_equality", true);
     }
 
     expr_ref mk_bounded(expr_ref_vector& axioms, app* x, unsigned lo, unsigned hi) {
@@ -158,29 +160,28 @@ public:
             m_mc->hide(v);
             last_v = v;
         }
-        expr* r = a.mk_add(xs.size(), xs.c_ptr());
+        expr* r = a.mk_add(xs.size(), xs.data());
         m_mc->add(x->get_decl(), r);
         return expr_ref(r, m);
     }
 
     void checkpoint() {
-        if (m.canceled()) {
+        if (!m.inc()) {
             throw tactic_exception(m.limit().get_cancel_msg());
         }
     }
 
     void operator()(goal_ref const & g, goal_ref_buffer & result) override {
-        SASSERT(g->is_well_sorted());
         m_bounds.reset();
         m_mc.reset();
         expr_ref_vector axioms(m);
         expr_safe_replace rep(m);
 
-        TRACE("pb", g->display(tout););
         tactic_report report("lia2card", *g);
 
         bound_manager bounds(m);
-        bounds(*g);
+        for (unsigned i = 0; i < g->size(); ++i)
+            bounds(g->form(i), g->dep(i), g->pr(i));
 
         for (expr* x : bounds) {
             checkpoint();
@@ -194,32 +195,35 @@ public:
                 expr_ref b = mk_bounded(axioms, to_app(x), lo.get_unsigned(), hi.get_unsigned());
                 rep.insert(x, b);
                 m_bounds.insert(x, bound(lo.get_unsigned(), hi.get_unsigned(), b));
-                TRACE("pb", tout << "add bound " << mk_pp(x, m) << "\n";);
+                TRACE("pb", tout << "add bound " << lo << " " << hi << ": " << mk_pp(x, m) << "\n";);
             }
         }
-        for (unsigned i = 0; i < g->size(); i++) {
+        for (unsigned i = 0; !g->inconsistent() && i < g->size(); i++) {
             checkpoint();
 
             expr_ref   new_curr(m), tmp(m);
-            proof_ref  new_pr(m);
+            proof_ref  pr1(m), pr2(m), new_pr(m);
             rep(g->form(i), tmp);
-            m_rw(tmp, new_curr, new_pr);
-            if (m.proofs_enabled() && !new_pr) {
-                new_pr = m.mk_rewrite(g->form(i), new_curr);
+            if (g->form(i) != tmp && m.proofs_enabled()) {
+                pr1 = m.mk_rewrite(g->form(i), tmp);
+            }
+            m_rw(tmp, new_curr, pr2);
+            if (m.proofs_enabled() && tmp != new_curr && !pr2) {
+                pr2 = m.mk_rewrite(tmp, new_curr);
+            }
+            if (m.proofs_enabled() && g->pr(i)) {
+                new_pr = m.mk_transitivity(pr1, pr2);
                 new_pr = m.mk_modus_ponens(g->pr(i), new_pr);
             }
             // IF_VERBOSE(0, verbose_stream() << mk_pp(g->form(i), m) << "\n--->\n" << new_curr << "\n";);
             g->update(i, new_curr, new_pr, g->dep(i));
-
         }
-        for (expr* a : axioms) {
+        for (expr* a : axioms) 
             g->assert_expr(a);
-        }
+
         if (m_mc) g->add(m_mc.get());
         g->inc_depth();
         result.push_back(g.get());
-        TRACE("pb", g->display(tout););
-        SASSERT(g->is_well_sorted());
         m_bounds.reset();
     }
 
@@ -327,7 +331,7 @@ public:
         if (!m.is_true(e)) {
             es.push_back(e);
         }
-        result = mk_and(m, es.size(), es.c_ptr());
+        result = mk_and(m, es.size(), es.data());
         if (!m.is_true(e)) {
             es.pop_back();
         }

@@ -16,7 +16,6 @@ Author:
 Notes:
 
 --*/
-#include<iostream>
 #include "api/z3.h"
 #include "api/api_log_macros.h"
 #include "api/api_context.h"
@@ -877,7 +876,7 @@ extern "C" {
         CHECK_VALID_AST(s, 0);
         if (!is_fp_sort(c, s)) {
             SET_ERROR_CODE(Z3_INVALID_ARG, "fp sort expected");
-            RETURN_Z3(0);
+            return 0;
         }
         return mk_c(c)->fpautil().get_ebits(to_sort(s));
         Z3_CATCH_RETURN(0);
@@ -891,7 +890,7 @@ extern "C" {
         CHECK_VALID_AST(s, 0);
         if (!is_fp_sort(c, s)) {
             SET_ERROR_CODE(Z3_INVALID_ARG, "fp sort expected");
-            RETURN_Z3(0);
+            return 0;
         }
         return mk_c(c)->fpautil().get_sbits(to_sort(s));
         Z3_CATCH_RETURN(0);
@@ -1091,7 +1090,7 @@ extern "C" {
         if (biased) {
             exp = mpfm.is_zero(val) ? 0 :
                   mpfm.is_inf(val) ? mpfm.mk_top_exp(ebits) :
-                  mpfm.bias_exp(ebits, mpfm.exp(val));            
+                  mpfm.bias_exp(ebits, mpfm.exp(val));
         }
         else {
             exp = mpfm.is_zero(val) ? 0 :
@@ -1200,8 +1199,9 @@ extern "C" {
             RETURN_Z3(nullptr);
         }
         api::context * ctx = mk_c(c);
-        Z3_ast r = of_ast(ctx->fpautil().mk_to_ieee_bv(to_expr(t)));
-        RETURN_Z3(r);
+        expr * r = ctx->fpautil().mk_to_ieee_bv(to_expr(t));
+        ctx->save_ast_trail(r);
+        RETURN_Z3(of_expr(r));
         Z3_CATCH_RETURN(nullptr);
     }
 

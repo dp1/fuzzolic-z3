@@ -16,43 +16,45 @@ Author:
 Notes:
 
 --*/
-#include "solver/solver_na2as.h"
-#include "smt/smt_kernel.h"
+
+#include "util/dec_ref_util.h"
 #include "ast/reg_decl_plugins.h"
-#include "smt/params/smt_params.h"
-#include "smt/params/smt_params_helper.hpp"
-#include "solver/mus.h"
 #include "ast/for_each_expr.h"
 #include "ast/ast_smt2_pp.h"
 #include "ast/func_decl_dependencies.h"
-#include "util/dec_ref_util.h"
+#include "smt/smt_kernel.h"
+#include "smt/params/smt_params.h"
+#include "smt/params/smt_params_helper.hpp"
+#include "solver/solver_na2as.h"
+#include "solver/mus.h"
 
-namespace smt {
+namespace {
 
     class smt_solver : public solver_na2as {
 
         struct cuber {
             smt_solver& m_solver;
             unsigned    m_round;
-            expr_ref    m_result;
+            expr_ref_vector  m_result;
+            unsigned    m_depth;
             cuber(smt_solver& s):
                 m_solver(s),
                 m_round(0),
-                m_result(s.get_manager()) {}
+                m_result(s.get_manager()),
+                m_depth(s.m_smt_params.m_cube_depth) {}
             expr_ref cube() {
-                switch (m_round) {
-                case 0:
-                    m_result = m_solver.m_context.next_cube();
-                    break;
-                case 1:
-                    m_result = m_solver.get_manager().mk_not(m_result);
-                    break;
-                default:
-                    m_result = m_solver.get_manager().mk_false();
-                    break;
+                if (m_round == 0) {
+                    m_result = m_solver.m_context.cubes(m_depth);
+                }
+                expr_ref r(m_result.m());
+                if (m_round < m_result.size()) {
+                    r = m_result.get(m_round);
+                }
+                else {
+                    r = m_result.m().mk_false();
                 }
                 ++m_round;
-                return m_result;
+                return r;
             }
         };
 
@@ -88,24 +90,24 @@ namespace smt {
             smt_solver * result = alloc(smt_solver, m, p, m_logic);
             smt::kernel::copy(m_context, result->m_context);
 
-
             if (mc0()) 
                 result->set_model_converter(mc0()->translate(translator));
 
             for (auto & kv : m_name2assertion) { 
                 expr* val = translator(kv.m_value);
-                expr* t = translator(kv.m_key);
-                result->m_name2assertion.insert(t, val);
-                result->solver_na2as::assert_expr(val, t);
-                m.inc_ref(val);
+                expr* key = translator(kv.m_key);
+                result->assert_expr(val, key);
             }
 
             return result;
         }
 
         ~smt_solver() override {
-            dec_ref_values(get_manager(), m_name2assertion);
             dealloc(m_cuber);
+            for (auto& kv : m_name2assertion) {
+                get_manager().dec_ref(kv.m_key);
+                get_manager().dec_ref(kv.m_value);
+            }
         }
 
         void updt_params(params_ref const & p) override {
@@ -122,7 +124,7 @@ namespace smt {
         smt_params m_smt_params_save;
 
         void push_params() override {
-            m_params_save = params_ref();
+            m_params_save.reset();           
             m_params_save.copy(solver::get_params());
             m_smt_params_save = m_smt_params;
         }
@@ -134,6 +136,10 @@ namespace smt {
 
         void collect_param_descrs(param_descrs & r) override {
             m_context.collect_param_descrs(r);
+            insert_timeout(r);
+            insert_rlimit(r);
+            insert_max_memory(r);
+            insert_ctrl_c(r);
         }
 
         void collect_statistics(statistics & st) const override {
@@ -152,6 +158,10 @@ namespace smt {
         void assert_expr_core(expr * t) override {
             m_context.assert_expr(t);
         }
+        void set_phase(expr* e) override { m_context.set_phase(e); }
+        phase* get_phase() override { return m_context.get_phase(); }
+        void set_phase(phase* p) override { m_context.set_phase(p); }
+        void move_to_front(expr* e) override { m_context.move_to_front(e); }
 
         void assert_expr_core2(expr * t, expr * a) override {
             if (m_name2assertion.contains(a)) {
@@ -159,6 +169,7 @@ namespace smt {
             }
             solver_na2as::assert_expr_core2(t, a);
             get_manager().inc_ref(t);
+            get_manager().inc_ref(a);
             m_name2assertion.insert(a, t);
         }
 
@@ -173,13 +184,12 @@ namespace smt {
                 SASSERT(n <= lvl);
                 unsigned new_lvl = lvl - n;
                 unsigned old_sz = m_scopes[new_lvl];
-                for (unsigned i = cur_sz; i > old_sz; ) {
-                    --i;
-                    expr * key = m_assumptions[i].get();
-                    SASSERT(m_name2assertion.contains(key));
+                for (unsigned i = cur_sz; i-- > old_sz; ) {
+                    expr * key = m_assumptions.get(i);
                     expr * value = m_name2assertion.find(key);
-                    m.dec_ref(value);
                     m_name2assertion.erase(key);
+                    m.dec_ref(value);
+                    m.dec_ref(key);
                 }
             }
             m_context.pop(n);
@@ -190,7 +200,6 @@ namespace smt {
             return m_context.check(num_assumptions, assumptions);
         }
 
-
         lbool check_sat_cc_core(expr_ref_vector const& cube, vector<expr_ref_vector> const& clauses) override {
             return m_context.check(cube, clauses);
         }
@@ -199,8 +208,48 @@ namespace smt {
             m_context.get_levels(vars, depth);
         }
 
-        expr_ref_vector get_trail() override {
-            return m_context.get_trail();
+        expr_ref_vector get_trail(unsigned max_level) override {
+            return m_context.get_trail(max_level);
+        }
+
+        void register_on_clause(void* ctx, user_propagator::on_clause_eh_t& on_clause) override {
+            m_context.register_on_clause(ctx, on_clause);
+        }
+
+        void user_propagate_init(
+            void*                ctx, 
+            user_propagator::push_eh_t&   push_eh,
+            user_propagator::pop_eh_t&    pop_eh,
+            user_propagator::fresh_eh_t&  fresh_eh) override {
+            m_context.user_propagate_init(ctx, push_eh, pop_eh, fresh_eh);
+        }
+        
+        void user_propagate_register_fixed(user_propagator::fixed_eh_t& fixed_eh) override {
+            m_context.user_propagate_register_fixed(fixed_eh);
+        }
+
+        void user_propagate_register_final(user_propagator::final_eh_t& final_eh) override {
+            m_context.user_propagate_register_final(final_eh);
+        }
+        
+        void user_propagate_register_eq(user_propagator::eq_eh_t& eq_eh) override {
+            m_context.user_propagate_register_eq(eq_eh);
+        }
+        
+        void user_propagate_register_diseq(user_propagator::eq_eh_t& diseq_eh) override {
+            m_context.user_propagate_register_diseq(diseq_eh);
+        }
+
+        void user_propagate_register_expr(expr* e) override { 
+            m_context.user_propagate_register_expr(e);
+        }
+
+        void user_propagate_register_created(user_propagator::created_eh_t& c) override {
+            m_context.user_propagate_register_created(c);
+        }
+
+        void user_propagate_register_decide(user_propagator::decide_eh_t& c) override {
+            m_context.user_propagate_register_decide(c);
         }
 
         struct scoped_minimize_core {
@@ -226,7 +275,7 @@ namespace smt {
             if (!m_minimizing_core && smt_params_helper(get_params()).core_minimize()) {
                 scoped_minimize_core scm(*this);
                 mus mus(*this);
-                mus.add_soft(r.size(), r.c_ptr());
+                mus.add_soft(r.size(), r.data());
                 expr_ref_vector r2(m);
                 if (l_true == mus.get_mus(r2)) {
                     r.reset();
@@ -244,7 +293,7 @@ namespace smt {
             m_context.get_model(m);
         }
 
-        proof * get_proof() override {
+        proof * get_proof_core() override {
             return m_context.get_proof();
         }
 
@@ -259,7 +308,7 @@ namespace smt {
         void get_labels(svector<symbol> & r) override {
             buffer<symbol> tmp;
             m_context.get_relevant_labels(nullptr, tmp);
-            r.append(tmp.size(), tmp.c_ptr());
+            r.append(tmp.size(), tmp.data());
         }
 
         ast_manager & get_manager() const override { return m_context.m(); }
@@ -276,6 +325,14 @@ namespace smt {
             SASSERT(idx < get_num_assertions());
             return m_context.get_formula(idx);
         }
+
+        void get_units_core(expr_ref_vector& units) override {
+            m_context.get_units(units);
+        }
+
+        expr* congruence_next(expr* e) override { return m_context.congruence_next(e); }
+        expr* congruence_root(expr* e) override { return m_context.congruence_root(e); }
+
 
         expr_ref_vector cube(expr_ref_vector& vars, unsigned cutoff) override {
             ast_manager& m = get_manager();
@@ -377,9 +434,11 @@ namespace smt {
 
                 for (expr* c : core) {
                     expr_ref name(c, m);
-                    SASSERT(m_name2assertion.contains(name));
-                    expr_ref assrtn(m_name2assertion.find(name), m);
-                    collect_pattern_fds(assrtn, pattern_fds);
+                    expr* f = nullptr;
+                    if (m_name2assertion.find(name, f)) {
+                        expr_ref assrtn(f, m);
+                        collect_pattern_fds(assrtn, pattern_fds);
+                    }
                 }
 
                 if (!pattern_fds.empty()) {
@@ -395,7 +454,7 @@ namespace smt {
                     }
                 }
 
-                core.append(new_core_literals.size(), new_core_literals.c_ptr());
+                core.append(new_core_literals.size(), new_core_literals.data());
 
                 if (new_core_literals.empty())
                     break;
@@ -445,18 +504,20 @@ namespace smt {
             }
         }
     };
-};
-
-solver * mk_smt_solver(ast_manager & m, params_ref const & p, symbol const & logic) {
-    return alloc(smt::smt_solver, m, p, logic);
 }
 
+solver * mk_smt_solver(ast_manager & m, params_ref const & p, symbol const & logic) {
+    return alloc(smt_solver, m, p, logic);
+}
+
+namespace {
 class smt_solver_factory : public solver_factory {
 public:
     solver * operator()(ast_manager & m, params_ref const & p, bool proofs_enabled, bool models_enabled, bool unsat_core_enabled, symbol const & logic) override {
         return mk_smt_solver(m, p, logic);
     }
 };
+}
 
 solver_factory * mk_smt_solver_factory() {
     return alloc(smt_solver_factory);

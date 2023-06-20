@@ -16,8 +16,7 @@ Author:
 Notes:
 
 --*/
-#ifndef POLY_REWRITER_H_
-#define POLY_REWRITER_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "util/obj_hashtable.h"
@@ -35,9 +34,9 @@ protected:
     unsigned                m_som_blowup;
     bool                    m_sort_sums;
     bool                    m_hoist_mul;
-    bool                    m_hoist_cmul;
     bool                    m_ast_order;
     bool                    m_hoist_ite;
+    ast_manager& M() { return Config::m; }
 
     bool is_numeral(expr * n) const { return Config::is_numeral(n); }
     bool is_numeral(expr * n, numeral & r) const { return Config::is_numeral(n, r); }
@@ -67,7 +66,7 @@ protected:
 
     void set_curr_sort(sort * s) { m_curr_sort = s; }
 
-    expr * const * get_monomials(expr * & t, unsigned & sz) {
+    expr * const * get_monomials(expr * & t, unsigned & sz) const {
         if (is_add(t)) {
             sz = to_app(t)->get_num_args();
             return to_app(t)->get_args();
@@ -88,9 +87,7 @@ protected:
     bool hoist_multiplication(expr_ref& som);
     expr* merge_muls(expr* x, expr* y);
 
-    struct hoist_cmul_lt;
-    bool is_mul(expr * t, numeral & c, expr * & pp);
-    void hoist_cmul(expr_ref_buffer & args);
+    bool is_mul(expr * t, numeral & c, expr * & pp) const;
 
     class mon_lt {
         poly_rewriter& rw;
@@ -108,10 +105,8 @@ public:
         updt_params(p);
         SASSERT(!m_som || m_flat); // som of monomials form requires flattening to be enabled.
         SASSERT(!m_som || !m_hoist_mul); // som is mutually exclusive with hoisting multiplication.
-        updt_params(p);
     }
 
-    ast_manager & m() const { return Config::m(); }
     family_id get_fid() const { return Config::get_fid(); }
 
     void updt_params(params_ref const & p);
@@ -129,6 +124,8 @@ public:
     bool is_var_plus_ground(expr * n, bool & inv, var * & v, expr_ref & t);
     bool is_zero(expr* e) const;
 
+    bool gcd_test(expr* lhs, expr* rhs) const;
+
 
     br_status mk_mul_core(unsigned num_args, expr * const * args, expr_ref & result) {
         SASSERT(num_args > 0);
@@ -136,7 +133,7 @@ public:
             result = args[0];
             return BR_DONE;
         }
-        set_curr_sort(m().get_sort(args[0]));
+        set_curr_sort(args[0]->get_sort());
         return m_flat ?
             mk_flat_mul_core(num_args, args, result) :
             mk_nflat_mul_core(num_args, args, result);
@@ -147,7 +144,7 @@ public:
             result = args[0];
             return BR_DONE;
         }
-        set_curr_sort(m().get_sort(args[0]));
+        set_curr_sort(args[0]->get_sort());
         return m_flat ?
             mk_flat_add_core(num_args, args, result) :
             mk_nflat_add_core(num_args, args, result);
@@ -180,4 +177,3 @@ public:
 };
 
 
-#endif

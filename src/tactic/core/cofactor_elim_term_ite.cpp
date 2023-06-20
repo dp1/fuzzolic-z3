@@ -33,8 +33,7 @@ struct cofactor_elim_term_ite::imp {
     void checkpoint() { 
         if (memory::get_allocation_size() > m_max_memory)
             throw tactic_exception(TACTIC_MAX_MEMORY_MSG);
-        if (m.canceled())
-            throw tactic_exception(m.limit().get_cancel_msg());
+        tactic::checkpoint(m);
     }
 
     // Collect atoms that contain term if-then-else
@@ -129,9 +128,8 @@ struct cofactor_elim_term_ite::imp {
                     fr.m_first   = false;
                     bool visited = true;
                     if (is_app(t)) {
-                        unsigned num_args = to_app(t)->get_num_args();
-                        for (unsigned i = 0; i < num_args; i++)
-                            visit(to_app(t)->get_arg(i), form_ctx, visited);
+                        for (expr* arg : *to_app(t)) 
+                            visit(arg, form_ctx, visited);
                     }
                     // ignoring quantifiers
                     if (!visited)
@@ -139,16 +137,13 @@ struct cofactor_elim_term_ite::imp {
                 }
                 
                 if (is_app(t)) {
-                    unsigned num_args = to_app(t)->get_num_args();
-                    unsigned i;
-                    for (i = 0; i < num_args; i++) {
-                        if (m_has_term_ite.is_marked(to_app(t)->get_arg(i)))
+                    for (expr* arg : *to_app(t)) {
+                        if (m_has_term_ite.is_marked(arg)) {
+                            m_has_term_ite.mark(t);
+                            TRACE("cofactor", tout << "saving candidate: " << form_ctx << "\n" << mk_bounded_pp(t, m) << "\n";);
+                            save_candidate(t, form_ctx);
                             break;
-                    }
-                    if (i < num_args) {
-                        m_has_term_ite.mark(t);
-                        TRACE("cofactor", tout << "saving candidate: " << form_ctx << "\n" << mk_bounded_pp(t, m) << "\n";);
-                        save_candidate(t, form_ctx);
+                        }
                     }
                 }
                 else {
@@ -285,16 +280,14 @@ struct cofactor_elim_term_ite::imp {
         }
         expr * best = nullptr;
         unsigned best_occs = 0;
-        obj_map<expr, unsigned>::iterator it  = occs.begin();
-        obj_map<expr, unsigned>::iterator end = occs.end();
-        for (; it != end; ++it) {
+        for (auto const& [k, v] : occs) {
             if ((!best) ||
-                (get_depth(it->m_key) < get_depth(best))  ||
-                (get_depth(it->m_key) == get_depth(best) && it->m_value > best_occs) ||
+                (get_depth(k) < get_depth(best))  ||
+                (get_depth(k) == get_depth(best) && v > best_occs) ||
                 // break ties by giving preference to equalities
-                (get_depth(it->m_key) == get_depth(best) && it->m_value == best_occs && m.is_eq(it->m_key) && !m.is_eq(best))) {
-                best = it->m_key;
-                best_occs = it->m_value;
+                (get_depth(k) == get_depth(best) && v == best_occs && m.is_eq(k) && !m.is_eq(best))) {
+                best = k;
+                best_occs = v;                
             }
         }
         visited.reset();
@@ -618,7 +611,7 @@ struct cofactor_elim_term_ite::imp {
                     has_term_ite = true;
                 expr_ref new_t(m);
                 if (has_new_args)
-                    new_t = m.mk_app(to_app(t)->get_decl(), num, new_args.c_ptr());
+                    new_t = m.mk_app(to_app(t)->get_decl(), num, new_args.data());
                 else
                     new_t = t;
                 if (has_term_ite && is_atom(new_t)) {

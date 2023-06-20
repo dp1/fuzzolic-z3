@@ -15,11 +15,11 @@ Author:
 Revision History:
 
 --*/
-#ifndef API_UTIL_H_
-#define API_UTIL_H_
+#pragma once
 
 #include "util/params.h"
 #include "util/lbool.h"
+#include "util/mutex.h"
 #include "ast/ast.h"
 
 #define Z3_TRY try {
@@ -35,12 +35,12 @@ namespace api {
 
     // Generic wrapper for ref-count objects exposed by the API
     class object {
-        unsigned m_ref_count;
+        atomic<unsigned> m_ref_count;
         unsigned m_id;
         context& m_context;
     public:
         object(context& c);
-        virtual ~object() {}
+        virtual ~object() = default;
         unsigned ref_count() const { return m_ref_count; }
         unsigned id() const { return m_id; }
         void inc_ref();
@@ -76,8 +76,8 @@ inline Z3_func_decl of_func_decl(func_decl* f) { return reinterpret_cast<Z3_func
 
 inline func_decl * const * to_func_decls(Z3_func_decl const* f) { return reinterpret_cast<func_decl*const*>(f); }
 
-inline symbol to_symbol(Z3_symbol s) { return symbol::mk_symbol_from_c_ptr(reinterpret_cast<void*>(s)); }
-inline Z3_symbol of_symbol(symbol s) { return reinterpret_cast<Z3_symbol>(const_cast<void*>(s.c_ptr())); }
+inline symbol to_symbol(Z3_symbol s) { return symbol::c_api_ext2symbol(s); }
+inline Z3_symbol of_symbol(symbol s) { return static_cast<Z3_symbol>(s.c_api_symbol2ext()); }
 
 inline Z3_pattern of_pattern(ast* a) { return reinterpret_cast<Z3_pattern>(a); }
 inline app* to_pattern(Z3_pattern p) { return reinterpret_cast<app*>(p); }
@@ -88,17 +88,15 @@ inline lbool    to_lbool(Z3_lbool b) { return static_cast<lbool>(b); }
 struct Z3_params_ref : public api::object {
     params_ref m_params;
     Z3_params_ref(api::context& c): api::object(c) {}
-    ~Z3_params_ref() override {}
 };
 
 inline Z3_params_ref * to_params(Z3_params p) { return reinterpret_cast<Z3_params_ref *>(p); }
 inline Z3_params of_params(Z3_params_ref * p) { return reinterpret_cast<Z3_params>(p); }
-inline params_ref to_param_ref(Z3_params p) { return p == nullptr ? params_ref() : to_params(p)->m_params; }
+inline params_ref& to_param_ref(Z3_params p) { return p == nullptr ? const_cast<params_ref&>(params_ref::get_empty()) : to_params(p)->m_params; }
 
 struct Z3_param_descrs_ref : public api::object {
     param_descrs m_descrs;
     Z3_param_descrs_ref(api::context& c): api::object(c) {}
-    ~Z3_param_descrs_ref() override {}
 };
 
 inline Z3_param_descrs_ref * to_param_descrs(Z3_param_descrs p) { return reinterpret_cast<Z3_param_descrs_ref *>(p); }
@@ -172,4 +170,3 @@ Z3_ast Z3_API NAME(Z3_context c, unsigned num_args, Z3_ast const* args) { \
     Z3_CATCH_RETURN(0);                                                 \
 }
 
-#endif

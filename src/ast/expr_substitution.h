@@ -16,8 +16,7 @@ Author:
 Notes:
 
 --*/
-#ifndef EXPR_SUBSTITUTION_H_
-#define EXPR_SUBSTITUTION_H_
+#pragma once
 
 #include "ast/ast.h"
 
@@ -45,15 +44,24 @@ public:
     bool empty() const { return m_subst.empty(); }
     unsigned size() const { return m_subst.size(); }
     void insert(expr * s, expr * def, proof * def_pr = nullptr, expr_dependency * def_dep = nullptr);
+    void insert(expr* s, expr* def, expr_dependency* def_dep) { insert(s, def, nullptr, def_dep); }
     void erase(expr * s);
+    expr* find(expr* s) { return m_subst[s]; }
+    expr_dependency* dep(expr* s) { return (*m_subst_dep)[s]; }
     bool find(expr * s, expr * & def, proof * & def_pr);
     bool find(expr * s, expr * & def, proof * & def_pr, expr_dependency * & def_dep);
     bool contains(expr * s);
     void reset();
     void cleanup();
 
+    obj_map<expr, expr*> const & sub() const { return m_subst; }
+
     std::ostream& display(std::ostream& out);
 };
+
+inline std::ostream& operator<<(std::ostream& out, expr_substitution& s) {
+    return s.display(out);
+}
 
 class scoped_expr_substitution {
     expr_substitution& m_subst;
@@ -62,7 +70,6 @@ class scoped_expr_substitution {
 public:
 
     scoped_expr_substitution(expr_substitution& s): m_subst(s), m_trail(s.m()) {}
-    ~scoped_expr_substitution() {}
 
     void insert(expr * s, expr * def, proof * def_pr = nullptr, expr_dependency * def_dep = nullptr) {
         if (!m_subst.contains(s)) {
@@ -92,4 +99,3 @@ public:
     std::ostream& display(std::ostream& out) { return m_subst.display(out); }
 };
 
-#endif

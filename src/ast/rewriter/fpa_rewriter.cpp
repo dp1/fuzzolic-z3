@@ -17,7 +17,7 @@ Notes:
 
 --*/
 #include "ast/rewriter/fpa_rewriter.h"
-#include "ast/rewriter/fpa_rewriter_params.hpp"
+#include "params/fpa_rewriter_params.hpp"
 #include "ast/ast_smt2_pp.h"
 
 fpa_rewriter::fpa_rewriter(ast_manager & m, params_ref const & p) :
@@ -25,9 +25,6 @@ fpa_rewriter::fpa_rewriter(ast_manager & m, params_ref const & p) :
     m_fm(m_util.fm()),
     m_hi_fp_unspecified(false) {
     updt_params(p);
-}
-
-fpa_rewriter::~fpa_rewriter() {
 }
 
 void fpa_rewriter::updt_params(params_ref const & _p) {
@@ -69,6 +66,8 @@ br_status fpa_rewriter::mk_app_core(func_decl * f, unsigned num_args, expr * con
     case OP_FPA_ABS:       SASSERT(num_args == 1); st = mk_abs(args[0], result); break;
     case OP_FPA_MIN:       SASSERT(num_args == 2); st = mk_min(args[0], args[1], result); break;
     case OP_FPA_MAX:       SASSERT(num_args == 2); st = mk_max(args[0], args[1], result); break;
+    case OP_FPA_MIN_I:     SASSERT(num_args == 2); st = mk_min(args[0], args[1], result); break;
+    case OP_FPA_MAX_I:     SASSERT(num_args == 2); st = mk_max(args[0], args[1], result); break;
     case OP_FPA_FMA:       SASSERT(num_args == 4); st = mk_fma(args[0], args[1], args[2], args[3], result); break;
     case OP_FPA_SQRT:      SASSERT(num_args == 2); st = mk_sqrt(args[0], args[1], result); break;
     case OP_FPA_ROUND_TO_INTEGRAL: SASSERT(num_args == 2); st = mk_round_to_integral(args[0], args[1], result); break;
@@ -89,10 +88,14 @@ br_status fpa_rewriter::mk_app_core(func_decl * f, unsigned num_args, expr * con
     case OP_FPA_FP:        SASSERT(num_args == 3); st = mk_fp(args[0], args[1], args[2], result); break;
     case OP_FPA_TO_FP:     st = mk_to_fp(f, num_args, args, result); break;
     case OP_FPA_TO_FP_UNSIGNED: SASSERT(num_args == 2); st = mk_to_fp_unsigned(f, args[0], args[1], result); break;
-    case OP_FPA_TO_UBV:    SASSERT(num_args == 2); st = mk_to_ubv(f, args[0], args[1], result); break;
-    case OP_FPA_TO_SBV:    SASSERT(num_args == 2); st = mk_to_sbv(f, args[0], args[1], result); break;
+    case OP_FPA_TO_UBV:     SASSERT(num_args == 2); st = mk_to_ubv(f, args[0], args[1], result); break;
+    case OP_FPA_TO_SBV:     SASSERT(num_args == 2); st = mk_to_sbv(f, args[0], args[1], result); break;
+    case OP_FPA_TO_UBV_I:   SASSERT(num_args == 2); st = mk_to_ubv(f, args[0], args[1], result); break;
+    case OP_FPA_TO_SBV_I:   SASSERT(num_args == 2); st = mk_to_sbv(f, args[0], args[1], result); break;
     case OP_FPA_TO_IEEE_BV: SASSERT(num_args == 1); st = mk_to_ieee_bv(f, args[0], result); break;
+    case OP_FPA_TO_IEEE_BV_I: SASSERT(num_args == 1); st = mk_to_ieee_bv(f, args[0], result); break;
     case OP_FPA_TO_REAL:   SASSERT(num_args == 1); st = mk_to_real(args[0], result); break;
+    case OP_FPA_TO_REAL_I:   SASSERT(num_args == 1); st = mk_to_real(args[0], result); break;
 
     case OP_FPA_BVWRAP: SASSERT(num_args == 1); st = mk_bvwrap(args[0], result); break;
     case OP_FPA_BV2RM: SASSERT(num_args == 1); st = mk_bv2rm(args[0], result); break;
@@ -313,12 +316,12 @@ br_status fpa_rewriter::mk_neg(expr * arg1, expr_ref & result) {
     }
     if (m_util.is_pinf(arg1)) {
         // - +oo --> -oo
-        result = m_util.mk_ninf(m().get_sort(arg1));
+        result = m_util.mk_ninf(arg1->get_sort());
         return BR_DONE;
     }
     if (m_util.is_ninf(arg1)) {
         // - -oo -> +oo
-        result = m_util.mk_pinf(m().get_sort(arg1));
+        result = m_util.mk_pinf(arg1->get_sort());
         return BR_DONE;
     }
     if (m_util.is_neg(arg1)) {
@@ -476,7 +479,7 @@ br_status fpa_rewriter::mk_float_eq(expr * arg1, expr * arg2, expr_ref & result)
 
 // Return (= arg NaN)
 app * fpa_rewriter::mk_eq_nan(expr * arg) {
-    return m().mk_eq(arg, m_util.mk_nan(m().get_sort(arg)));
+    return m().mk_eq(arg, m_util.mk_nan(arg->get_sort()));
 }
 
 // Return (not (= arg NaN))

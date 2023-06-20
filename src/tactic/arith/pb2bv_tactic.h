@@ -13,11 +13,35 @@ Author:
 
     Christoph (cwinter) 2012-02-15
 
-Notes:
+Tactic Documentation:
+
+## Tactic pb2bv
+
+### Short Description
+
+Convert pseudo-boolean constraints to bit-vectors
+
+### Example
+
+```z3
+(declare-const x Int)
+(declare-const y Int)
+(declare-const z Int)
+(declare-const u Int)
+(assert (<= 0 x))
+(assert (<= 0 y))
+(assert (<= 0 z))
+(assert (<= 0 u))
+(assert (<= x 1))
+(assert (<= y 1))
+(assert (<= z 1))
+(assert (<= u 1))
+(assert (>= (+ (* 3 x) (* 2 y) (* 2 z) (* 2 u)) 4))
+(apply pb2bv)
+```
 
 --*/
-#ifndef PB2BV_TACTIC_H_
-#define PB2BV_TACTIC_H_
+#pragma once
 
 #include "util/params.h"
 class ast_manager;
@@ -34,4 +58,3 @@ probe * mk_is_pb_probe();
   ADD_PROBE("is-pb", "true if the goal is a pseudo-boolean problem.", "mk_is_pb_probe()")
 */
 
-#endif

@@ -25,8 +25,8 @@ Notes:
 
 namespace smt {
 
-    theory_wmaxsat::theory_wmaxsat(ast_manager& m, generic_model_converter& mc):
-        theory(m.mk_family_id("weighted_maxsat")),
+    theory_wmaxsat::theory_wmaxsat(context& ctx, ast_manager& m, generic_model_converter& mc):
+        theory(ctx, m.mk_family_id("weighted_maxsat")),
         m_mc(mc),
         m_vars(m),
         m_fmls(m),
@@ -47,7 +47,7 @@ namespace smt {
     /**
        \brief return the complement of variables that are currently assigned.
     */
-    void theory_wmaxsat::get_assignment(svector<bool>& result) {
+    void theory_wmaxsat::get_assignment(bool_vector& result) {
         result.reset();
         
         if (!m_found_optimal) {
@@ -88,7 +88,6 @@ namespace smt {
     }
     
     expr* theory_wmaxsat::assert_weighted(expr* fml, rational const& w) {
-        context & ctx = get_context();
         ast_manager& m = get_manager();
         app_ref var(m), wfml(m);
         var = m.mk_fresh_const("w", m.mk_bool_sort());
@@ -109,7 +108,6 @@ namespace smt {
     }
 
     void theory_wmaxsat::disable_var(expr* var) {
-        context& ctx = get_context();
         SASSERT(ctx.b_internalized(var));
         bool_var bv = ctx.get_bool_var(var);
         theory_var tv = m_bool2var[bv];
@@ -118,7 +116,6 @@ namespace smt {
     }
     
     bool_var theory_wmaxsat::register_var(app* var, bool attach) {
-        context & ctx = get_context();
         bool_var bv;
         SASSERT(!ctx.e_internalized(var));
         enode* x = ctx.mk_enode(var, false, true, true);
@@ -159,14 +156,13 @@ namespace smt {
     void theory_wmaxsat::assign_eh(bool_var v, bool is_true) {
         if (is_true) {
             if (m_normalize) normalize();
-            context& ctx = get_context();
             theory_var tv = m_bool2var[v];
             if (m_assigned[tv] || !m_enabled[tv]) return;
             scoped_mpz w(m_mpz);
             w = m_zweights[tv];
             ctx.push_trail(numeral_trail(m_zcost, m_old_values));
-            ctx.push_trail(push_back_vector<context, svector<theory_var> >(m_costs));
-            ctx.push_trail(value_trail<context, bool>(m_assigned[tv]));
+            ctx.push_trail(push_back_vector<svector<theory_var> >(m_costs));
+            ctx.push_trail(value_trail<bool>(m_assigned[tv]));
             m_zcost += w;
             TRACE("opt", tout << "Assign v" << tv << " weight: " << w << " cost: " << m_zcost << " " << mk_pp(m_vars[m_bool2var[v]].get(), get_manager()) << "\n";);
             m_costs.push_back(tv);
@@ -212,7 +208,6 @@ namespace smt {
 
 
     void theory_wmaxsat::propagate() {
-        context& ctx = get_context();
         for (unsigned i = 0; m_propagate && i < m_vars.size(); ++i) {
             bool_var bv = m_var2bool[i];
             lbool asgn = ctx.get_assignment(bv);
@@ -253,13 +248,13 @@ namespace smt {
             TRACE("opt",
                   tout << "costs: ";
                   for (unsigned i = 0; i < m_costs.size(); ++i) {
-                      tout << mk_pp(get_enode(m_costs[i])->get_owner(), get_manager()) << " ";
+                      tout << pp(get_enode(m_costs[i]), get_manager()) << " ";
                   }
                   tout << "\n";
-                  //get_context().display(tout);                      
+                  //ctx.display(tout);                      
                   );
         }
-        expr_ref result(m.mk_or(disj.size(), disj.c_ptr()), m);
+        expr_ref result(m.mk_or(disj.size(), disj.data()), m);
         TRACE("opt",
               tout << result << " weight: " << weight << "\n";
               tout << "cost: " << m_zcost << " min-cost: " << m_zmin_cost << "\n";);
@@ -273,7 +268,6 @@ namespace smt {
             return;
         }
         ++m_stats.m_num_blocks;
-        context& ctx = get_context();
         literal_vector lits;
         compare_cost compare_cost(*this);
         svector<theory_var> costs(m_costs);
@@ -289,11 +283,10 @@ namespace smt {
         
         ctx.set_conflict(
             ctx.mk_justification(
-                ext_theory_conflict_justification(get_id(), ctx.get_region(), lits.size(), lits.c_ptr(), 0, nullptr, 0, nullptr)));
+                ext_theory_conflict_justification(get_id(), ctx, lits.size(), lits.data(), 0, nullptr, 0, nullptr)));
     }     
 
     bool theory_wmaxsat::max_unassigned_is_blocked() {
-        context& ctx = get_context();
         unsigned max_unassigned = m_max_unassigned_index;
         if (max_unassigned < m_sorted_vars.size() && 
             m_zcost + m_zweights[m_sorted_vars[max_unassigned]] < m_zmin_cost) {
@@ -306,7 +299,7 @@ namespace smt {
         }
         // 
         if (max_unassigned > m_max_unassigned_index) {
-            ctx.push_trail(value_trail<context, unsigned>(m_max_unassigned_index));
+            ctx.push_trail(value_trail<unsigned>(m_max_unassigned_index));
             m_max_unassigned_index = max_unassigned;
         }
         if (max_unassigned < m_sorted_vars.size() && 
@@ -322,7 +315,6 @@ namespace smt {
     
     void theory_wmaxsat::propagate(bool_var v) {
         ++m_stats.m_num_propagations;
-        context& ctx = get_context();
         literal_vector lits;
         literal lit(v, true);
         
@@ -333,13 +325,12 @@ namespace smt {
             lits.push_back(literal(w));        
         }
         TRACE("opt", 
-              ctx.display_literals_verbose(tout, lits.size(), lits.c_ptr()); 
+              ctx.display_literals_verbose(tout, lits.size(), lits.data()); 
               ctx.display_literal_verbose(tout << " --> ", lit););
         
-        region& r = ctx.get_region();
         ctx.assign(lit, ctx.mk_justification(
                        ext_theory_propagation_justification(
-                           get_id(), r, lits.size(), lits.c_ptr(), 0, nullptr, lit, 0, nullptr)));
+                           get_id(), ctx, lits.size(), lits.data(), 0, nullptr, lit, 0, nullptr)));
     }                
 
 

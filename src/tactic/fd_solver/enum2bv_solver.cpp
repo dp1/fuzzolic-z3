@@ -23,12 +23,12 @@ Notes:
 #include "ast/bv_decl_plugin.h"
 #include "ast/datatype_decl_plugin.h"
 #include "ast/ast_pp.h"
+#include "ast/rewriter/enum2bv_rewriter.h"
 #include "model/model_smt2_pp.h"
 #include "tactic/tactic.h"
-#include "tactic/generic_model_converter.h"
-#include "solver/solver_na2as.h"
-#include "ast/rewriter/enum2bv_rewriter.h"
+#include "ast/converters/generic_model_converter.h"
 #include "tactic/fd_solver/enum2bv_solver.h"
+#include "solver/solver_na2as.h"
 
 class enum2bv_solver : public solver_na2as {
     ast_manager&     m;
@@ -45,8 +45,6 @@ public:
     {
         solver::updt_params(p);
     }
-
-    ~enum2bv_solver() override {}
 
     solver* translate(ast_manager& dst_m, params_ref const& p) override {   
         solver* result = alloc(enum2bv_solver, dst_m, p, m_solver->translate(dst_m, p));
@@ -89,6 +87,10 @@ public:
     void set_progress_callback(progress_callback * callback) override { m_solver->set_progress_callback(callback);  }
     void collect_statistics(statistics & st) const override { m_solver->collect_statistics(st); }
     void get_unsat_core(expr_ref_vector & r) override { m_solver->get_unsat_core(r); }
+    void set_phase(expr* e) override { m_solver->set_phase(e); }
+    phase* get_phase() override { return m_solver->get_phase(); }
+    void set_phase(phase* p) override { m_solver->set_phase(p); }
+    void move_to_front(expr* e) override { m_solver->move_to_front(e); }
     void get_model_core(model_ref & mdl) override { 
         m_solver->get_model(mdl);
         if (mdl) {
@@ -118,7 +120,7 @@ public:
         mc = concat(mc.get(), m_solver->get_model_converter().get());
         return mc;
     }
-    proof * get_proof() override { return m_solver->get_proof(); }
+    proof * get_proof_core() override { return m_solver->get_proof_core(); }
     std::string reason_unknown() const override { return m_solver->reason_unknown(); }
     void set_reason_unknown(char const* msg) override { m_solver->set_reason_unknown(msg); }
     void get_labels(svector<symbol> & r) override { m_solver->get_labels(r); }
@@ -129,6 +131,9 @@ public:
     expr_ref_vector cube(expr_ref_vector& vars, unsigned backtrack_level) override { 
         return m_solver->cube(vars, backtrack_level); 
     }
+    expr* congruence_next(expr* e) override { return m_solver->congruence_next(e); }
+    expr* congruence_root(expr* e) override { return m_solver->congruence_root(e); }
+
     
     lbool get_consequences_core(expr_ref_vector const& asms, expr_ref_vector const& vars, expr_ref_vector& consequences) override {
         datatype_util dt(m);
@@ -146,6 +151,7 @@ public:
         m_rewriter.flush_side_constraints(bounds);
         m_solver->assert_expr(bounds);
 
+
         // translate enumeration constants to bit-vectors.
         for (expr* v : vars) {
             func_decl* f = nullptr;
@@ -159,12 +165,13 @@ public:
         lbool r = m_solver->get_consequences(asms, bvars, consequences);
 
         // translate bit-vector consequences back to enumeration types
-        for (unsigned i = 0; i < consequences.size(); ++i) {
+        unsigned i = 0;
+        for (expr* c : consequences) {
             expr* a = nullptr, *b = nullptr, *u = nullptr, *v = nullptr;
             func_decl* f;
             rational num;
             unsigned bvsize;
-            VERIFY(m.is_implies(consequences[i].get(), a, b));
+            VERIFY(m.is_implies(c, a, b));
             if (m.is_eq(b, u, v) && is_uninterp_const(u) && m_rewriter.bv2enum().find(to_app(u)->get_decl(), f) && bv.is_numeral(v, num, bvsize)) {
                 SASSERT(num.is_unsigned());
                 expr_ref head(m);
@@ -174,6 +181,7 @@ public:
                     consequences[i] = m.mk_implies(a, head);
                 }
             }
+            ++i;
         }
         return r;
     }
@@ -182,8 +190,8 @@ public:
         m_solver->get_levels(vars, depth);
     }
 
-    expr_ref_vector get_trail() override {
-        return m_solver->get_trail();
+    expr_ref_vector get_trail(unsigned max_level) override {
+        return m_solver->get_trail(max_level);
     }
 
     unsigned get_num_assertions() const override {

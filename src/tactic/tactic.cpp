@@ -34,11 +34,16 @@ struct tactic_report::imp {
         m_goal(g),
         m_start_memory(static_cast<double>(memory::get_allocation_size())/static_cast<double>(1024*1024)) {
         m_watch.start();
+        TRACE("tactic", g.display_with_proofs(tout << id << "\n"););
+        SASSERT(g.is_well_formed());
     }
         
     ~imp() {
         m_watch.stop();
         double end_memory = static_cast<double>(memory::get_allocation_size())/static_cast<double>(1024*1024);
+        TRACE("tactic", m_goal.display(tout << m_id << "\n");
+              if (m_goal.mc()) m_goal.mc()->display(tout);
+              );
         IF_VERBOSE(0, 
                    verbose_stream() << "(" << m_id
                    << " :num-exprs " << m_goal.num_exprs()
@@ -46,7 +51,9 @@ struct tactic_report::imp {
                    << " :time " << std::fixed << std::setprecision(2) << m_watch.get_seconds()
                    << " :before-memory " << std::fixed << std::setprecision(2) << m_start_memory
                    << " :after-memory " << std::fixed << std::setprecision(2) << end_memory
-                   << ")" << std::endl);
+                   << ")\n");
+        IF_VERBOSE(20, m_goal.display(verbose_stream() << m_id << "\n"));
+        SASSERT(m_goal.is_well_formed());
     }
 };
 
@@ -64,9 +71,21 @@ tactic_report::~tactic_report() {
 
 void report_tactic_progress(char const * id, unsigned val) {
     if (val > 0) {
-        IF_VERBOSE(TACTIC_VERBOSITY_LVL, verbose_stream() << "(" << id << " " << val << ")" << std::endl;);
+        IF_VERBOSE(TACTIC_VERBOSITY_LVL, verbose_stream() << "(" << id << " " << val << ")\n");        
     }
 }
+
+statistics_report::~statistics_report() {
+    statistics st;
+    if (m_tactic)
+        m_tactic->collect_statistics(st);
+    else if (m_collector)
+        m_collector(st);
+    if (st.size() == 0)
+        return;
+    IF_VERBOSE(TACTIC_VERBOSITY_LVL, st.display_smt2(verbose_stream()));
+}
+
 
 void skip_tactic::operator()(goal_ref const & in, goal_ref_buffer& result) {
     result.push_back(in.get());
@@ -83,6 +102,8 @@ public:
     }
 
     void cleanup() override {}
+
+    char const* name() const override { return "fail"; }
 
     tactic * translate(ast_manager & m) override { return this; }
 };
@@ -145,7 +166,7 @@ void exec(tactic & t, goal_ref const & in, goal_ref_buffer & result) {
         t.cleanup();
     }
     catch (tactic_exception & ex) {
-        IF_VERBOSE(TACTIC_VERBOSITY_LVL, verbose_stream() << "(tactic-exception \"" << escaped(ex.msg()) << "\")" << std::endl;);
+        IF_VERBOSE(TACTIC_VERBOSITY_LVL, verbose_stream() << "(tactic-exception \"" << escaped(ex.msg()) << "\")\n");
         t.cleanup();
         throw ex;
     }
@@ -174,15 +195,18 @@ lbool check_sat(tactic & t, goal_ref & g, model_ref & md, labels_vec & labels, p
 
     if (r.size() > 0) {
         pr = r[0]->pr(0);
-        TRACE("tactic", tout << pr << "\n";);
-    }
-    
+        CTRACE("tactic", pr, tout << pr << "\n";);
+    }    
 
     if (is_decided_sat(r)) {
         model_converter_ref mc = r[0]->mc();            
         if (mc.get()) {
             (*mc)(labels);
             model_converter2model(m, mc.get(), md);
+        }
+        if (!m.inc()) {
+            reason_unknown = "canceled";
+            return l_undef;
         }
         if (!md) {
             // create empty model.
@@ -204,7 +228,9 @@ lbool check_sat(tactic & t, goal_ref & g, model_ref & md, labels_vec & labels, p
             if (mc)
                 (*mc)(labels);
         }
-        reason_unknown = "incomplete";
+        reason_unknown = get_reason_unknown(r);
+        if (reason_unknown.empty())
+            reason_unknown = "unknown";
         return l_undef;
     }
 }
@@ -231,4 +257,18 @@ void fail_if_model_generation(char const * tactic_name, goal_ref const & in) {
         msg += " does not generate models";
         throw tactic_exception(std::move(msg));
     }
+}
+
+void fail_if_has_quantifiers(char const* tactic_name, goal_ref const& g) {
+    for (unsigned i = 0; i < g->size(); ++i)
+        if (has_quantifiers(g->form(i))) {
+            std::string msg = tactic_name;
+            msg += " does not apply to quantified goals";
+            throw tactic_exception(std::move(msg));
+        }
+}
+
+void tactic::checkpoint(ast_manager& m) {
+    if (!m.inc())
+        throw tactic_exception(m.limit().get_cancel_msg());
 }

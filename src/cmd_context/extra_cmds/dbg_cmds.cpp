@@ -26,14 +26,14 @@ Notes:
 #include "ast/ast_lt.h"
 #include "cmd_context/simplify_cmd.h"
 #include "ast/ast_smt2_pp.h"
-#include "tactic/arith/bound_manager.h"
+#include "ast/simplifiers/bound_manager.h"
 #include "ast/used_vars.h"
 #include "ast/rewriter/var_subst.h"
 #include "ast/ast_util.h"
 #include "util/gparams.h"
 #include "qe/qe_mbp.h"
 #include "qe/qe_mbi.h"
-#include "qe/qe_term_graph.h"
+#include "qe/mbp/mbp_term_graph.h"
 
 
 BINARY_SYM_CMD(get_quantifier_body_cmd,
@@ -123,7 +123,7 @@ public:
     }
     void execute(cmd_context & ctx) override {
         beta_reducer p(ctx.m());
-        expr_ref r = p(m_source, m_subst.size(), m_subst.c_ptr());
+        expr_ref r = p(m_source, m_subst.size(), m_subst.data());
         store_expr_ref(ctx, m_target, r.get());
     }
 };
@@ -199,12 +199,12 @@ void tst_params(cmd_context & ctx) {
     params_ref p1;
     params_ref p2;
     p1.set_uint("val", 100);
-    p2 = p1;
+    p2.append(p1);
     SASSERT(p2.get_uint("val", 0) == 100);
     p2.set_uint("val", 200);
     SASSERT(p2.get_uint("val", 0) == 200);
     SASSERT(p1.get_uint("val", 0) == 100);
-    p2 = p1;
+    p2.append(p1);
     SASSERT(p2.get_uint("val", 0) == 100);
     SASSERT(p1.get_uint("val", 0) == 100);
     ctx.regular_stream() << "worked" << std::endl;
@@ -293,7 +293,7 @@ public:
             throw cmd_exception("invalid command, mismatch between the number of quantified variables and the number of arguments.");
         unsigned i = num;
         while (i-- > 0) {
-            sort * s = ctx.m().get_sort(ts[i]);
+            sort * s = ts[i]->get_sort();
             if (s != m_q->get_decl_sort(i)) {
                 std::ostringstream buffer;
                 buffer << "invalid command, sort mismatch at position " << i;
@@ -304,7 +304,7 @@ public:
     }
 
     void execute(cmd_context & ctx) override {
-        expr_ref r = instantiate(ctx.m(), m_q, m_args.c_ptr());
+        expr_ref r = instantiate(ctx.m(), m_q, m_args.data());
         ctx.display(ctx.regular_stream(), r);
         ctx.regular_stream() << std::endl;
     }
@@ -369,12 +369,58 @@ public:
             }
             vars.push_back(to_app(v));
         }
-        qe::mbp mbp(m);
+        qe::mbproj mbp(m);
         expr_ref fml(m_fml, m);
         mbp.spacer(vars, *mdl.get(), fml);
         ctx.regular_stream() << fml << "\n";
     }
 };
+
+class get_interpolant_cmd : public cmd {
+    scoped_ptr<expr_ref> m_a;
+    scoped_ptr<expr_ref> m_b;
+public:
+    get_interpolant_cmd():cmd("get-interpolant") {}
+    char const * get_usage() const override { return "<expr> <expr>"; }
+    char const * get_descr(cmd_context & ctx) const override { return "perform model based interpolation"; }
+    unsigned get_arity() const override { return 2; }
+    cmd_arg_kind next_arg_kind(cmd_context& ctx) const override {
+        return CPK_EXPR; 
+    }
+    void set_next_arg(cmd_context& ctx, expr * arg) override { 
+        ast_manager& m = ctx.m();
+        if (!m.is_bool(arg))
+            throw default_exception("argument to interpolation is not Boolean");
+        if (!m_a) 
+            m_a = alloc(expr_ref, arg, m); 
+        else 
+            m_b = alloc(expr_ref, arg, m); 
+    }
+    void prepare(cmd_context & ctx) override { m_a = nullptr; m_b = nullptr;  }
+    void execute(cmd_context & ctx) override { 
+        ast_manager& m = ctx.m();
+        qe::interpolator mbi(m);
+        if (!m_a || !m_b)
+            throw default_exception("interpolation requires two arguments");
+        if (!m.is_bool(*m_a) || !m.is_bool(*m_b))
+            throw default_exception("interpolation requires two Boolean arguments");
+        expr_ref itp(m);
+        lbool r = mbi.pogo(ctx.get_solver_factory(), *m_a, *m_b, itp);
+        switch (r) {
+        case l_true:
+            ctx.regular_stream() << "sat\n";
+            break;
+        case l_undef:
+            ctx.regular_stream() << "unknown\n";
+            break;
+        case l_false:
+            ctx.regular_stream() << itp << "\n";
+            break;
+        }
+    }
+};
+
+
 
 class mbi_cmd : public cmd {
     expr* m_a;
@@ -468,7 +514,7 @@ public:
         solver_ref sNotB = sf(m, p, false /* no proofs */, true, true, symbol::null);
         sA->assert_expr(a);
         sB->assert_expr(b);
-        qe::euf_arith_mbi_plugin pA(sA.get(), sNotA.get());
+        qe::uflia_mbi pA(sA.get(), sNotA.get());
         qe::prop_mbi_plugin pB(sB.get());
         pA.set_shared(vars);
         pB.set_shared(vars);
@@ -518,7 +564,7 @@ public:
         }
         model_ref mdl;
         s->get_model(mdl);
-        qe::euf_arith_mbi_plugin plugin(s.get(), se.get());
+        qe::uflia_mbi plugin(s.get(), se.get());
         plugin.set_shared(vars);
         plugin.project(mdl, lits);
         ctx.regular_stream() << lits << "\n";
@@ -550,6 +596,7 @@ void install_dbg_cmds(cmd_context & ctx) {
     ctx.insert(alloc(instantiate_cmd));
     ctx.insert(alloc(instantiate_nested_cmd));
     ctx.insert(alloc(set_next_id));
+    ctx.insert(alloc(get_interpolant_cmd));
     ctx.insert(alloc(mbp_cmd));
     ctx.insert(alloc(mbi_cmd));
     ctx.insert(alloc(euf_project_cmd));

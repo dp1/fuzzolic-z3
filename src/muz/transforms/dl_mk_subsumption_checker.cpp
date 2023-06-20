@@ -25,7 +25,7 @@ Revision History:
 #include "ast/rewriter/rewriter_def.h"
 #include "muz/transforms/dl_mk_subsumption_checker.h"
 #include "muz/base/fp_params.hpp"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 
 
 namespace datalog {
@@ -125,7 +125,7 @@ namespace datalog {
         app_ref head(r->get_head(), m);
 
         app_ref_vector tail(m);
-        svector<bool> tail_neg;
+        bool_vector tail_neg;
 
         for(unsigned i=0; i<u_len; i++) {
             app * tail_atom = r->get_tail(i);
@@ -164,7 +164,7 @@ namespace datalog {
         }
 
         SASSERT(tail.size()==tail_neg.size());
-        res = m_context.get_rule_manager().mk(head, tail.size(), tail.c_ptr(), tail_neg.c_ptr(), r->name());
+        res = m_context.get_rule_manager().mk(head, tail.size(), tail.data(), tail_neg.data(), r->name());
         res->set_accounting_parent_object(m_context, r);
         m_context.get_rule_manager().fix_unbound_vars(res, true);
         m_context.get_rule_manager().mk_rule_rewrite_proof(*r, *res.get());
@@ -189,7 +189,7 @@ namespace datalog {
 
         //before traversing we sort rules so that the shortest are in the beginning.
         //this will help make subsumption checks more efficient
-        std::sort(orig_rules.c_ptr(), orig_rules.c_ptr() + orig_rules.size(), rule_size_comparator);
+        std::sort(orig_rules.data(), orig_rules.data() + orig_rules.size(), rule_size_comparator);
 
         for (rule * r : orig_rules) {
             func_decl * head_pred = r->get_decl();
@@ -335,7 +335,7 @@ namespace datalog {
     rule_set * mk_subsumption_checker::operator()(rule_set const & source) {
         // TODO mc
         if (!m_context.get_params ().xform_subsumption_checker())
-          return nullptr;
+            return nullptr;
 
         m_have_new_total_rule = false;
         collect_ground_unconditional_rule_heads(source);
@@ -343,28 +343,24 @@ namespace datalog {
         scan_for_total_rules(source);
 
         m_have_new_total_rule = false;
-        rule_set * res = alloc(rule_set, m_context);
+        scoped_ptr<rule_set> res = alloc(rule_set, m_context);
         bool modified = transform_rules(source, *res);
 
         if (!m_have_new_total_rule && !modified) {
-            dealloc(res);
             return nullptr;
         }
-
 
         //During the construction of the new set we may discover new total relations
         //(by quantifier elimination on the uninterpreted tails).
         SASSERT(m_new_total_relation_discovery_during_transformation || !m_have_new_total_rule);
         while (m_have_new_total_rule) {
             m_have_new_total_rule = false;
-
-            rule_set * old = res;
+            scoped_ptr<rule_set> old = res.detach();
             res = alloc(rule_set, m_context);
             transform_rules(*old, *res);
-            dealloc(old);
         }
 
-        return res;
+        return res.detach();
     }
 
 };

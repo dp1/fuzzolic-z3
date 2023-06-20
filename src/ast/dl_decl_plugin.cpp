@@ -244,7 +244,7 @@ namespace datalog {
             ps.push_back(parameter(sorts[j]));
         }
         SASSERT(ps.size() + num_params == sorts.size());
-        sort* r2 = m.mk_sort(m_family_id, DL_RELATION_SORT, ps.size(), ps.c_ptr());        
+        sort* r2 = m.mk_sort(m_family_id, DL_RELATION_SORT, ps.size(), ps.data());        
         func_decl_info info(m_family_id, OP_RA_PROJECT, num_params, params);            
         return m.mk_func_decl(m_project_sym, 1, &r, r2, info);
     }
@@ -297,7 +297,7 @@ namespace datalog {
                     m_manager->raise_exception("illegal index");
                     return nullptr;
                 }
-                if (sorts[idx] != m.get_sort(e)) {
+                if (sorts[idx] != e->get_sort()) {
                     m_manager->raise_exception("sort mismatch in filter");
                     return nullptr;
                 }
@@ -353,7 +353,7 @@ namespace datalog {
         for (unsigned i = 0; i < sorts.size(); ++i) {
             params2.push_back(parameter(sorts[i]));
         }
-        sort* rng = m_manager->mk_sort(m_family_id, DL_RELATION_SORT, params2.size(), params2.c_ptr());
+        sort* rng = m_manager->mk_sort(m_family_id, DL_RELATION_SORT, params2.size(), params2.data());
         func_decl_info info(m_family_id, OP_RA_RENAME, num_params, params);            
         return m_manager->mk_func_decl(m_rename_sym, 1, &r, rng, info);
     }
@@ -396,7 +396,7 @@ namespace datalog {
             }
         }
         sort* args[2] = { r1, r2 };
-        sort* rng = m_manager->mk_sort(m_family_id, DL_RELATION_SORT, params2.size(), params2.c_ptr());
+        sort* rng = m_manager->mk_sort(m_family_id, DL_RELATION_SORT, params2.size(), params2.data());
         func_decl_info info(m_family_id, OP_RA_JOIN, num_params, params);            
         return m_manager->mk_func_decl(m_join_sym, 2, args, rng, info);
     }
@@ -632,23 +632,29 @@ namespace datalog {
     }
 
     void dl_decl_plugin::get_sort_names(svector<builtin_name> & sort_names, symbol const & logic) {
-
-    }
-
-
-    dl_decl_util::ast_plugin_registrator::ast_plugin_registrator(ast_manager& m)
-    {
-        // ensure required plugins are installed into the ast_manager
-        reg_decl_plugins(m);
     }
 
     dl_decl_util::dl_decl_util(ast_manager& m):
-        m_plugin_registrator(m),
         m(m), 
-        m_arith(m),
-        m_bv(m),
-        m_fid(m.mk_family_id(symbol("datalog_relation")))
+        m_fid(null_family_id)
     {}
+
+    bv_util& dl_decl_util::bv() const {
+        if (!m_bv) m_bv = alloc(bv_util, m);
+        return *m_bv;
+    }
+
+    family_id dl_decl_util::get_family_id() const {
+        if (m_fid == null_family_id) {
+            m_fid = m.mk_family_id(symbol("datalog_relation"));
+        }
+        return m_fid;
+    };
+
+    arith_util& dl_decl_util::arith() const {
+        if (!m_arith) m_arith = alloc(arith_util, m);
+        return *m_arith;
+    }
 
     // create a constant belonging to a given finite domain.
 
@@ -659,13 +665,13 @@ namespace datalog {
                 m.raise_exception("value is out of bounds");
             }
             parameter params[2] = { parameter(rational(value, rational::ui64())), parameter(s) };
-            return m.mk_const(m.mk_func_decl(m_fid, OP_DL_CONSTANT, 2, params, 0, (sort*const*)nullptr));
+            return m.mk_const(m.mk_func_decl(get_family_id(), OP_DL_CONSTANT, 2, params, 0, (sort*const*)nullptr));
         }        
-        if (m_arith.is_int(s) || m_arith.is_real(s)) {
-            return m_arith.mk_numeral(rational(value, rational::ui64()), s);
+        if (arith().is_int(s) || arith().is_real(s)) {
+            return arith().mk_numeral(rational(value, rational::ui64()), s);
         }
-        if (m_bv.is_bv_sort(s)) {
-            return m_bv.mk_numeral(rational(value, rational::ui64()), s);
+        if (bv().is_bv_sort(s)) {
+            return bv().mk_numeral(rational(value, rational::ui64()), s);
         }
         if (m.is_bool(s)) {
             if (value == 0) {
@@ -694,16 +700,8 @@ namespace datalog {
     }
 
     bool dl_decl_util::is_numeral_ext(expr* e, uint64_t& v) const {
-        if (is_numeral(e, v)) {
+        if (is_numeral(e, v)) 
             return true;
-        }
-        rational val;
-        unsigned bv_size = 0;
-        if (m_bv.is_numeral(e, val, bv_size) && bv_size < 64) {
-            SASSERT(val.is_uint64());
-            v = val.get_uint64();
-            return true;
-        }
         if (m.is_true(e)) {
             v = 1;
             return true;
@@ -712,16 +710,43 @@ namespace datalog {
             v = 0;
             return true;
         }
+
+        rational val;
+        unsigned bv_size = 0;
+        if (bv().is_numeral(e, val, bv_size) && bv_size < 64) {
+            SASSERT(val.is_uint64());
+            v = val.get_uint64();
+            return true;
+        }
+
+        datatype::util dt(m);
+        if (dt.is_enum_sort(e->get_sort()) && dt.is_constructor(e)) {
+            auto& cs = *dt.get_datatype_constructors(e->get_sort());
+            v = 0;
+            for (func_decl* f : cs) {
+                if (f == to_app(e)->get_decl())
+                    return true;
+                ++v;
+            }
+        }
         return false;
     }
 
     bool dl_decl_util::is_numeral_ext(expr* c) const {
-        if (is_numeral(c)) return true;
+        if (is_numeral(c))
+            return true;
         rational val;
         unsigned bv_size = 0;        
-        if (m_arith.is_numeral(c, val) && val.is_uint64()) return true;
-        if (m_bv.is_numeral(c, val, bv_size) && bv_size < 64) return true;
-        return m.is_true(c) || m.is_false(c);
+        if (arith().is_numeral(c, val) && val.is_uint64())
+            return true;
+        if (bv().is_numeral(c, val, bv_size) && bv_size < 64)
+            return true;
+        if (m.is_true(c) || m.is_false(c))
+            return true;
+        datatype::util dt(m);
+        if (dt.is_enum_sort(c->get_sort()) && dt.is_constructor(c))
+            return true;
+        return false;
     }
 
     sort* dl_decl_util::mk_sort(const symbol& name, uint64_t  domain_size) {
@@ -731,7 +756,7 @@ namespace datalog {
             throw default_exception(sstm.str());
         }
         parameter params[2] = { parameter(name), parameter(rational(domain_size, rational::ui64())) };
-        return m.mk_sort(m_fid, DL_FINITE_SORT, 2, params);
+        return m.mk_sort(get_family_id(), DL_FINITE_SORT, 2, params);
     }
 
     bool dl_decl_util::try_get_size(const sort * s, uint64_t& size) const {
@@ -745,24 +770,24 @@ namespace datalog {
 
     app* dl_decl_util::mk_lt(expr* a, expr* b) {
         expr* args[2] = { a, b };
-        return m.mk_app(m_fid, OP_DL_LT, 0, nullptr, 2, args);
+        return m.mk_app(get_family_id(), OP_DL_LT, 0, nullptr, 2, args);
     }
 
     app* dl_decl_util::mk_le(expr* a, expr* b) {
         expr* args[2] = { b, a };
-        return m.mk_not(m.mk_app(m_fid, OP_DL_LT, 0, nullptr, 2, args));
+        return m.mk_not(m.mk_app(get_family_id(), OP_DL_LT, 0, nullptr, 2, args));
     }
 
     sort* dl_decl_util::mk_rule_sort() {
-        return m.mk_sort(m_fid, DL_RULE_SORT);
+        return m.mk_sort(get_family_id(), DL_RULE_SORT);
     }
 
     app* dl_decl_util::mk_rule(symbol const& name, unsigned num_args, expr* const* args) {
         ptr_buffer<sort> sorts;
         for (unsigned i = 0; i < num_args; ++i) {
-            sorts.push_back(m.get_sort(args[i]));
+            sorts.push_back(args[i]->get_sort());
         }
-        func_decl* f = m.mk_func_decl(name, num_args, sorts.c_ptr(), mk_rule_sort());
+        func_decl* f = m.mk_func_decl(name, num_args, sorts.data(), mk_rule_sort());
         return m.mk_app(f, num_args, args);
     }
 

@@ -64,6 +64,7 @@ struct blaster_cfg {
     void mk_ite(expr * c, expr * t, expr * e, expr_ref & r) { m_rewriter.mk_ite(c, t, e, r); }
     void mk_nand(expr * a, expr * b, expr_ref & r) { m_rewriter.mk_nand(a, b, r); }
     void mk_nor(expr * a, expr * b, expr_ref & r) { m_rewriter.mk_nor(a, b, r); }
+    void mk_ge2(expr * a, expr * b, expr * c, expr_ref& r) { m_rewriter.mk_ge2(a, b, c, r); }
 };
 
 class blaster : public bit_blaster_tpl<blaster_cfg> {
@@ -74,7 +75,7 @@ public:
         bit_blaster_tpl<blaster_cfg>(blaster_cfg(m_rewriter, m_util)),
         m_rewriter(m),
         m_util(m) {
-        m_rewriter.set_flat(false);
+        m_rewriter.set_flat_and_or(false);
         m_rewriter.set_elim_and(true);
     }
 
@@ -124,9 +125,6 @@ struct blaster_rewriter_cfg : public default_rewriter_cfg {
         m_values(m),
         m_newbits(m) {
         updt_params(p);
-    }
-
-    ~blaster_rewriter_cfg() {
     }
 
     void updt_params(params_ref const & p) {
@@ -189,23 +187,29 @@ struct blaster_rewriter_cfg : public default_rewriter_cfg {
         }
     }
 
-    unsigned m_keypos;
+    unsigned m_keypos { 0 };
 
     void start_rewrite() {
         m_keypos = m_keys.size();
     }
 
     void end_rewrite(obj_map<func_decl, expr*>& const2bits, ptr_vector<func_decl> & newbits) {
-        for (unsigned i = m_keypos; i < m_keys.size(); ++i) {
-            const2bits.insert(m_keys[i].get(), m_values[i].get());
-        }
-        for (func_decl* f : m_newbits) newbits.push_back(f);
-        
+        for (unsigned i = m_keypos; i < m_keys.size(); ++i) 
+            const2bits.insert(m_keys.get(i), m_values.get(i));
+        for (func_decl* f : m_newbits) 
+            newbits.push_back(f);        
+    }
+
+    void get_translation(obj_map<func_decl, expr*>& const2bits, ptr_vector<func_decl> & newbits) {
+        for (unsigned i = 0; i < m_keys.size(); ++i) 
+            const2bits.insert(m_keys.get(i), m_values.get(i));
+        for (func_decl* f : m_newbits) 
+            newbits.push_back(f);        
     }
 
     template<typename V>
     app * mk_mkbv(V const & bits) {
-        return m().mk_app(butil().get_family_id(), OP_MKBV, bits.size(), bits.c_ptr());
+        return m().mk_app(butil().get_family_id(), OP_MKBV, bits.size(), bits.data());
     }
 
     void mk_const(func_decl * f, expr_ref & result) {
@@ -237,7 +241,7 @@ void OP(expr * arg, expr_ref & result) {                        \
     m_in1.reset();                                              \
     get_bits(arg, m_in1);                                       \
     m_out.reset();                                              \
-    m_blaster.BB_OP(m_in1.size(), m_in1.c_ptr(), m_out);        \
+    m_blaster.BB_OP(m_in1.size(), m_in1.data(), m_out);        \
     result = mk_mkbv(m_out);                                    \
 }
 
@@ -251,7 +255,7 @@ void OP(expr * arg1, expr * arg2, expr_ref & result) {                  \
     get_bits(arg1, m_in1);                                              \
     get_bits(arg2, m_in2);                                              \
     m_out.reset();                                                      \
-    m_blaster.BB_OP(m_in1.size(), m_in1.c_ptr(), m_in2.c_ptr(), m_out); \
+    m_blaster.BB_OP(m_in1.size(), m_in1.data(), m_in2.data(), m_out); \
     result = mk_mkbv(m_out);                                            \
 }
 
@@ -281,6 +285,7 @@ void OP(unsigned num_args, expr * const * args, expr_ref & result) {    \
     MK_BIN_AC_REDUCE(reduce_add, reduce_bin_add, mk_adder);
     MK_BIN_AC_REDUCE(reduce_mul, reduce_bin_mul, mk_multiplier);
 
+    MK_BIN_AC_REDUCE(reduce_and, reduce_bin_and, mk_and);
     MK_BIN_AC_REDUCE(reduce_or, reduce_bin_or, mk_or);
     MK_BIN_AC_REDUCE(reduce_xor, reduce_bin_xor, mk_xor);
 
@@ -290,7 +295,7 @@ void OP(expr * arg1, expr * arg2, expr_ref & result) {                          
     m_in1.reset(); m_in2.reset();                                               \
     get_bits(arg1, m_in1);                                                      \
     get_bits(arg2, m_in2);                                                      \
-    m_blaster.BB_OP(m_in1.size(), m_in1.c_ptr(), m_in2.c_ptr(), result);        \
+    m_blaster.BB_OP(m_in1.size(), m_in1.data(), m_in2.data(), result);        \
 }
 
     MK_BIN_PRED_REDUCE(reduce_eq,  mk_eq);
@@ -305,7 +310,7 @@ void OP(expr * arg, unsigned n, expr_ref & result) {            \
     m_in1.reset();                                              \
     get_bits(arg, m_in1);                                       \
     m_out.reset();                                              \
-    m_blaster.BB_OP(m_in1.size(), m_in1.c_ptr(), n, m_out);     \
+    m_blaster.BB_OP(m_in1.size(), m_in1.data(), n, m_out);     \
     result = mk_mkbv(m_out);                                    \
 }
 
@@ -317,7 +322,7 @@ MK_PARAMETRIC_UNARY_REDUCE(reduce_sign_extend, mk_sign_extend);
         get_bits(arg2, m_in1);
         get_bits(arg3, m_in2);
         m_out.reset();
-        m_blaster.mk_multiplexer(arg1, m_in1.size(), m_in1.c_ptr(), m_in2.c_ptr(), m_out);
+        m_blaster.mk_multiplexer(arg1, m_in1.size(), m_in1.data(), m_in2.data(), m_out);
         result = mk_mkbv(m_out);
     }
 
@@ -328,7 +333,7 @@ MK_PARAMETRIC_UNARY_REDUCE(reduce_sign_extend, mk_sign_extend);
             i--;
             m_in1.reset();
             get_bits(args[i], m_in1);
-            m_out.append(m_in1.size(), m_in1.c_ptr());
+            m_out.append(m_in1.size(), m_in1.data());
         }
         result = mk_mkbv(m_out);
     }
@@ -353,8 +358,11 @@ MK_PARAMETRIC_UNARY_REDUCE(reduce_sign_extend, mk_sign_extend);
         result = mk_mkbv(m_out);
     }
 
-    void throw_unsupported() {
-        throw rewriter_exception("operator is not supported, you must simplify the goal before applying bit-blasting");
+    void throw_unsupported(func_decl * f) {
+        std::string msg = "operator ";
+        msg += f->get_name().str();
+        msg += " is not supported, you must simplify the goal before applying bit-blasting";
+        throw rewriter_exception(std::move(msg));
     }
 
     void blast_bv_term(expr * t, expr_ref & result, proof_ref & result_pr) {
@@ -420,7 +428,7 @@ MK_PARAMETRIC_UNARY_REDUCE(reduce_sign_extend, mk_sign_extend);
             case OP_BUREM:
             case OP_BSMOD:
                 if (m_blast_mul)
-                    throw_unsupported(); // must simplify to DIV_I AND DIV0
+                    throw_unsupported(f); // must simplify to DIV_I AND DIV0
                 return BR_FAILED; // keep them
 
             case OP_BSDIV0:
@@ -467,6 +475,9 @@ MK_PARAMETRIC_UNARY_REDUCE(reduce_sign_extend, mk_sign_extend);
             case OP_SLEQ:
                 SASSERT(num == 2);
                 reduce_sle(args[0], args[1], result);
+                return BR_DONE;
+            case OP_BAND:
+                reduce_and(num, args, result);
                 return BR_DONE;
             case OP_BOR:
                 reduce_or(num, args, result);
@@ -541,7 +552,7 @@ MK_PARAMETRIC_UNARY_REDUCE(reduce_sign_extend, mk_sign_extend);
             default:
                 TRACE("bit_blaster", tout << "non-supported operator: " << f->get_name() << "\n";
                       for (unsigned i = 0; i < num; i++) tout << mk_ismt2_pp(args[i], m()) << std::endl;);
-                throw_unsupported();
+                throw_unsupported(f);
             }
         }
 
@@ -653,7 +664,7 @@ MK_PARAMETRIC_UNARY_REDUCE(reduce_sign_extend, mk_sign_extend);
                 new_decl_names.push_back(n);
             }
         }
-        result = m().mk_quantifier(old_q->get_kind(), new_decl_sorts.size(), new_decl_sorts.c_ptr(), new_decl_names.c_ptr(),
+        result = m().mk_quantifier(old_q->get_kind(), new_decl_sorts.size(), new_decl_sorts.data(), new_decl_names.data(),
                                    new_body, old_q->get_weight(), old_q->get_qid(), old_q->get_skid(),
                                    old_q->get_num_patterns(), new_patterns, old_q->get_num_no_patterns(), new_no_patterns);
         result_pr = nullptr;
@@ -678,6 +689,7 @@ struct bit_blaster_rewriter::imp : public rewriter_tpl<blaster_rewriter_cfg> {
     void pop(unsigned s) { m_cfg.pop(s); }
     void start_rewrite() { m_cfg.start_rewrite(); }
     void end_rewrite(obj_map<func_decl, expr*>& const2bits, ptr_vector<func_decl> & newbits) { m_cfg.end_rewrite(const2bits, newbits); }
+    void get_translation(obj_map<func_decl, expr*>& const2bits, ptr_vector<func_decl> & newbits) { m_cfg.get_translation(const2bits, newbits); }
     unsigned get_num_scopes() const { return m_cfg.get_num_scopes(); }
 };
 
@@ -732,4 +744,8 @@ void bit_blaster_rewriter::start_rewrite() {
 
 void bit_blaster_rewriter::end_rewrite(obj_map<func_decl, expr*>& const2bits, ptr_vector<func_decl> & newbits) {
     m_imp->end_rewrite(const2bits, newbits);
+}
+
+void bit_blaster_rewriter::get_translation(obj_map<func_decl, expr*>& const2bits, ptr_vector<func_decl> & newbits) {
+    m_imp->get_translation(const2bits, newbits);
 }

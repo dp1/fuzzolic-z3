@@ -21,10 +21,10 @@ Notes:
 #include "tactic/core/propagate_values_tactic.h"
 #include "tactic/core/nnf_tactic.h"
 #include "tactic/arith/probe_arith.h"
-#include "smt/tactic/smt_tactic.h"
+#include "tactic/smtlogics/smt_tactic.h"
 #include "qe/qe_tactic.h"
 #include "qe/nlqsat.h"
-#include "qe/qe_lite.h"
+#include "qe/lite/qe_lite.h"
 #include "nlsat/tactic/qfnra_nlsat_tactic.h"
 
 tactic * mk_nra_tactic(ast_manager & m, params_ref const& p) {

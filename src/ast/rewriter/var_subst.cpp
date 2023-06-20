@@ -17,6 +17,7 @@ Notes:
 
 --*/
 #include "ast/rewriter/var_subst.h"
+#include "ast/rewriter/expr_safe_replace.h"
 #include "ast/ast_ll_pp.h"
 #include "ast/ast_pp.h"
 #include "ast/ast_smt2_pp.h"
@@ -24,9 +25,31 @@ Notes:
 #include "ast/for_each_expr.h"
 
 expr_ref var_subst::operator()(expr * n, unsigned num_args, expr * const * args) {
-    expr_ref result(m_reducer.m());
-    if (is_ground(n)) {
+    ast_manager& m = m_reducer.m();
+    expr_ref result(m);
+    if (is_ground(n) || num_args == 0) {
         result = n;
+        //application does not have free variables or nested quantifiers.
+        //There is no need to print the bindings here?
+        SCTRACE("bindings", is_trace_enabled("coming_from_quant"),
+                tout << "(ground)\n";
+                        for (unsigned i = 0; i < num_args; i++) {
+                            if (args[i]) {
+                                tout << i << ": " << mk_ismt2_pp(args[i], result.m()) << ";\n";
+                            }
+                        }
+                        tout.flush(););
+
+        return result;
+    }
+    if (has_quantifiers(n)) {
+        expr_safe_replace rep(m);
+        for (unsigned k = 0; k < num_args; ++k) {
+            expr* arg = args[k];
+            if (arg)
+                rep.insert(m.mk_var(m_std_order ? num_args - k - 1 : k, arg->get_sort()), arg);
+        }
+        rep(n, result);
         return result;
     }
     SASSERT(is_well_sorted(result.m(), n));
@@ -36,12 +59,12 @@ expr_ref var_subst::operator()(expr * n, unsigned num_args, expr * const * args)
     else
         m_reducer.set_bindings(num_args, args);
     m_reducer(n, result);
-    SASSERT(is_well_sorted(m_reducer.m(), result));
+    SASSERT(is_well_sorted(m, result));
     TRACE("var_subst_bug",
-          tout << "m_std_order: " << m_std_order << "\n" << mk_ismt2_pp(n, m_reducer.m()) << "\nusing\n";
-          for (unsigned i = 0; i < num_args; i++) tout << mk_ismt2_pp(args[i], m_reducer.m()) << "\n";
+          tout << "m_std_order: " << m_std_order << "\n" << mk_ismt2_pp(n, m) << "\nusing\n";
+          for (unsigned i = 0; i < num_args; i++) tout << mk_ismt2_pp(args[i], m) << "\n";
           tout << "\n------>\n";
-          tout << mk_ismt2_pp(result, m_reducer.m()) << "\n";);
+          tout << result << "\n";);
     return result;
 }
 
@@ -68,7 +91,9 @@ expr_ref unused_vars_eliminator::operator()(quantifier* q) {
         result = q;
         return result;
     }
+    unsigned num_decls = q->get_num_decls();
     m_used.reset();
+    m_used.set_num_decls(num_decls);
     m_used.process(q->get_expr());
     unsigned num_patterns = q->get_num_patterns();
     for (unsigned i = 0; i < num_patterns; i++)
@@ -77,7 +102,7 @@ expr_ref unused_vars_eliminator::operator()(quantifier* q) {
     for (unsigned i = 0; i < num_no_patterns; i++)
         m_used.process(q->get_no_pattern(i));
 
-    unsigned num_decls = q->get_num_decls();
+    
     if (m_used.uses_all_vars(num_decls)) {
         q->set_no_unused_vars();
         result = q;
@@ -119,16 +144,15 @@ expr_ref unused_vars_eliminator::operator()(quantifier* q) {
             var_mapping.push_back(nullptr);
     }
 
-
     // Remark:
     // (VAR 0) should be in the last position of var_mapping.
     // ...
     // (VAR (var_mapping.size() - 1)) should be in the first position.
-    std::reverse(var_mapping.c_ptr(), var_mapping.c_ptr() + var_mapping.size());
+    std::reverse(var_mapping.data(), var_mapping.data() + var_mapping.size());
 
     expr_ref  new_expr(m);
 
-    new_expr = m_subst(q->get_expr(), var_mapping.size(), var_mapping.c_ptr());
+    new_expr = m_subst(q->get_expr(), var_mapping.size(), var_mapping.data());
 
     if (num_removed == num_decls) {
         result = new_expr;
@@ -139,24 +163,24 @@ expr_ref unused_vars_eliminator::operator()(quantifier* q) {
     expr_ref_buffer new_no_patterns(m);
 
     for (unsigned i = 0; i < num_patterns; i++) {
-        new_patterns.push_back(m_subst(q->get_pattern(i), var_mapping.size(), var_mapping.c_ptr()));
+        new_patterns.push_back(m_subst(q->get_pattern(i), var_mapping.size(), var_mapping.data()));
     }
     for (unsigned i = 0; i < num_no_patterns; i++) {
-        new_no_patterns.push_back(m_subst(q->get_no_pattern(i), var_mapping.size(), var_mapping.c_ptr()));
+        new_no_patterns.push_back(m_subst(q->get_no_pattern(i), var_mapping.size(), var_mapping.data()));
     }
 
     result = m.mk_quantifier(q->get_kind(),
                              used_decl_sorts.size(),
-                             used_decl_sorts.c_ptr(),
-                             used_decl_names.c_ptr(),
+                             used_decl_sorts.data(),
+                             used_decl_names.data(),
                              new_expr,
                              q->get_weight(),
                              q->get_qid(),
                              q->get_skid(),
                              num_patterns,
-                             new_patterns.c_ptr(),
+                             new_patterns.data(),
                              num_no_patterns,
-                             new_no_patterns.c_ptr());
+                             new_no_patterns.data());
     to_quantifier(result)->set_no_unused_vars();
     SASSERT(is_well_sorted(m, result));
     return result;
@@ -215,10 +239,8 @@ static void get_free_vars_offset(expr_sparse_mark& mark, ptr_vector<expr>& todo,
             break;
         }
         case AST_APP: {
-            app* a = to_app(e);
-            for (unsigned i = 0; i < a->get_num_args(); ++i) {
-                todo.push_back(a->get_arg(i));
-            }
+            for (expr* arg : *to_app(e))  
+                todo.push_back(arg);            
             break;
         }
         default:

@@ -52,7 +52,6 @@ namespace api {
             m_context(m, m_register_engine, p),
             m_trail(m) {}
 
-        ~fixedpoint_context() override {}
         family_id get_family_id() const override { return const_cast<datalog::context&>(m_context).get_decl_util().get_family_id(); }
         void set_state(void* state) {
             SASSERT(!m_state);
@@ -243,7 +242,8 @@ extern "C" {
         Z3_TRY;
         LOG_Z3_fixedpoint_dec_ref(c, s);
         RESET_ERROR_CODE();
-        to_fixedpoint(s)->dec_ref();
+        if (s)
+            to_fixedpoint(s)->dec_ref();
         Z3_CATCH;
     }
 
@@ -395,8 +395,7 @@ extern "C" {
         Z3_string     s) {
         Z3_TRY;
         LOG_Z3_fixedpoint_from_string(c, d, s);
-        std::string str(s);
-        std::istringstream is(str);
+        std::istringstream is(s);
         RETURN_Z3(Z3_fixedpoint_from_stream(c, d, is));
         Z3_CATCH_RETURN(nullptr);
     }
@@ -448,7 +447,7 @@ extern "C" {
         for (unsigned i = 0; i < num_relations; ++i) {
             kinds.push_back(to_symbol(relation_kinds[i]));
         }
-        to_fixedpoint_ref(d)->ctx().set_predicate_representation(to_func_decl(f), num_relations, kinds.c_ptr());
+        to_fixedpoint_ref(d)->ctx().set_predicate_representation(to_func_decl(f), num_relations, kinds.data());
         Z3_CATCH;
     }
 
@@ -584,7 +583,7 @@ extern "C" {
         to_fixedpoint_ref(d)->collect_param_descrs(descrs);
         to_params(p)->m_params.validate(descrs);
         to_fixedpoint_ref(d)->updt_params(to_param_ref(p));
-        to_fixedpoint(d)->m_params = to_param_ref(p);
+        to_fixedpoint(d)->m_params.append(to_param_ref(p));
         Z3_CATCH;
     }
 
@@ -677,10 +676,12 @@ extern "C" {
         
         to_fixedpoint_ref(d)->ctx().get_rules_along_trace_as_formulas(rules, names);
         for (unsigned i = 0; i < names.size(); ++i) {
-            ss << ";" << names[i].str();
+            if (i != 0)
+                ss << ';';
+            ss << names[i].str();
         }
-        RETURN_Z3(of_symbol(symbol(ss.str().substr(1).c_str())));
-        Z3_CATCH_RETURN(nullptr);
+        return of_symbol(symbol(ss.str()));
+        Z3_CATCH_RETURN(of_symbol(symbol::null));
     }
 
     void Z3_API Z3_fixedpoint_add_invariant(Z3_context c, Z3_fixedpoint d, Z3_func_decl pred, Z3_ast property) {

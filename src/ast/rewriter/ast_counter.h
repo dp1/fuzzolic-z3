@@ -21,8 +21,7 @@ Revision History:
 --*/
 
 
-#ifndef AST_COUNTER_H_
-#define AST_COUNTER_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "util/map.h"
@@ -35,8 +34,6 @@ protected:
     map_impl m_data;
 public:
     typedef map_impl::iterator iterator;
-    
-    counter() {}
     
     void reset() { m_data.reset(); }
     iterator begin() const { return m_data.begin(); }
@@ -52,7 +49,7 @@ public:
     */
     counter & count(unsigned sz, const unsigned * els, int delta = 1);
     counter & count(const unsigned_vector & els, int delta = 1) {
-        return count(els.size(), els.c_ptr(), delta);
+        return count(els.size(), els.data(), delta);
     }
     
     void collect_positive(uint_set & acc) const;
@@ -75,7 +72,6 @@ protected:
     unsigned_vector  m_scopes;
     unsigned get_max_var(bool & has_var);    
 public:
-    var_counter() {}
     void count_vars(const app * t, int coef = 1);
     unsigned get_max_var(expr* e);
     unsigned get_next_var(expr* e);
@@ -87,13 +83,11 @@ class ast_counter {
  public:
     typedef map_impl::iterator iterator;
     
-    ast_counter() {}
-    
     iterator begin() const { return m_data.begin(); }
     iterator end() const { return m_data.end(); }
     
     int & get(ast * el) {
-        return m_data.insert_if_not_there2(el, 0)->get_data().m_value;
+        return m_data.insert_if_not_there(el, 0);
     }
     void update(ast * el, int delta){
         get(el) += delta;
@@ -103,4 +97,3 @@ class ast_counter {
     void dec(ast * el) { update(el, -1); }
 };
 
-#endif

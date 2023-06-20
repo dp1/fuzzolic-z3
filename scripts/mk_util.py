@@ -15,7 +15,7 @@ import shutil
 from mk_exception import *
 import mk_genfile_common
 from fnmatch import fnmatch
-import distutils.sysconfig
+import sysconfig
 import compileall
 import subprocess
 
@@ -37,9 +37,7 @@ OCAMLC=getenv("OCAMLC", "ocamlc")
 OCAMLOPT=getenv("OCAMLOPT", "ocamlopt")
 OCAML_LIB=getenv("OCAML_LIB", None)
 OCAMLFIND=getenv("OCAMLFIND", "ocamlfind")
-CSC=getenv("CSC", None)
 DOTNET="dotnet"
-GACUTIL=getenv("GACUTIL", 'gacutil')
 # Standard install directories relative to PREFIX
 INSTALL_BIN_DIR=getenv("Z3_INSTALL_BIN_DIR", "bin")
 INSTALL_LIB_DIR=getenv("Z3_INSTALL_LIB_DIR", "lib")
@@ -48,10 +46,9 @@ INSTALL_PKGCONFIG_DIR=getenv("Z3_INSTALL_PKGCONFIG_DIR", os.path.join(INSTALL_LI
 
 CXX_COMPILERS=['g++', 'clang++']
 C_COMPILERS=['gcc', 'clang']
-CSC_COMPILERS=['csc', 'mcs']
 JAVAC=None
 JAR=None
-PYTHON_PACKAGE_DIR=distutils.sysconfig.get_python_lib(prefix=getenv("PREFIX", None))
+PYTHON_PACKAGE_DIR=sysconfig.get_path('purelib')
 BUILD_DIR='build'
 REV_BUILD_DIR='..'
 SRC_DIR='src'
@@ -72,9 +69,11 @@ IS_WINDOWS=False
 IS_LINUX=False
 IS_HURD=False
 IS_OSX=False
+IS_ARCH_ARM64=False
 IS_FREEBSD=False
 IS_NETBSD=False
 IS_OPENBSD=False
+IS_SUNOS=False
 IS_CYGWIN=False
 IS_CYGWIN_MINGW=False
 IS_MSYS2=False
@@ -91,11 +90,10 @@ VS_PROJ = False
 TRACE = False
 PYTHON_ENABLED=False
 DOTNET_CORE_ENABLED=False
-ESRP_SIGN=False
 DOTNET_KEY_FILE=getenv("Z3_DOTNET_KEY_FILE", None)
+ASSEMBLY_VERSION=getenv("Z2_ASSEMBLY_VERSION", None)
 JAVA_ENABLED=False
 ML_ENABLED=False
-JS_ENABLED=False
 PYTHON_INSTALL_ENABLED=False
 STATIC_LIB=False
 STATIC_BIN=False
@@ -118,6 +116,7 @@ ALWAYS_DYNAMIC_BASE=False
 
 FPMATH="Default"
 FPMATH_FLAGS="-mfpmath=sse -msse -msse2"
+FPMATH_ENABLED=getenv("FPMATH_ENABLED", "True")
 
 
 def check_output(cmd):
@@ -157,6 +156,9 @@ def is_netbsd():
 
 def is_openbsd():
     return IS_OPENBSD
+
+def is_sunos():
+    return IS_SUNOS
 
 def is_osx():
     return IS_OSX
@@ -245,10 +247,13 @@ def rmf(fname):
 
 def exec_compiler_cmd(cmd):
     r = exec_cmd(cmd)
-    if is_windows() or is_cygwin_mingw() or is_cygwin() or is_msys2():
-        rmf('a.exe')
-    else:
-        rmf('a.out')
+    # Windows
+    rmf('a.exe')
+    # Unix
+    rmf('a.out')
+    # Emscripten
+    rmf('a.wasm')
+    rmf('a.worker.js')
     return r
 
 def test_cxx_compiler(cc):
@@ -278,7 +283,13 @@ def test_gmp(cc):
 
 
 def test_fpmath(cc):
-    global FPMATH_FLAGS
+    global FPMATH_FLAGS, IS_ARCH_ARM64, IS_OSX
+    if FPMATH_ENABLED == "False":
+        FPMATH_FLAGS=""
+        return "Disabled"
+    if IS_ARCH_ARM64 and IS_OSX:
+        FPMATH_FLAGS = ""
+        return "Disabled-ARM64"
     if is_verbose():
         print("Testing floating point support...")
     t = TempFile('tstsse.cpp')
@@ -286,6 +297,10 @@ def test_fpmath(cc):
     t.commit()
     # -Werror is needed because some versions of clang warn about unrecognized
     # -m flags.
+    # TODO(ritave): Safari doesn't allow SIMD WebAssembly extension, add a flag to build script
+    if exec_compiler_cmd([cc, CPPFLAGS, '-Werror', 'tstsse.cpp', LDFLAGS, '-msse -msse2 -msimd128']) == 0:
+        FPMATH_FLAGS='-msse -msse2 -msimd128'
+        return 'SSE2-EMSCRIPTEN'
     if exec_compiler_cmd([cc, CPPFLAGS, '-Werror', 'tstsse.cpp', LDFLAGS, '-mfpmath=sse -msse -msse2']) == 0:
         FPMATH_FLAGS="-mfpmath=sse -msse -msse2"
         return "SSE2-GCC"
@@ -363,7 +378,7 @@ def check_java():
     oo = TempFile('output')
     eo = TempFile('errout')
     try:
-        subprocess.call([JAVAC, 'Hello.java', '-verbose'], stdout=oo.fname, stderr=eo.fname)
+        subprocess.call([JAVAC, 'Hello.java', '-verbose', '-source', '1.8', '-target', '1.8' ], stdout=oo.fname, stderr=eo.fname)
         oo.commit()
         eo.commit()
     except:
@@ -492,7 +507,10 @@ def find_ml_lib():
 
 def is64():
     global LINUX_X64
-    return LINUX_X64 and sys.maxsize >= 2**32
+    if is_sunos() and sys.version_info.major < 3:
+        return LINUX_X64
+    else:
+        return LINUX_X64 and sys.maxsize >= 2**32
 
 def check_ar():
     if is_verbose():
@@ -523,15 +541,33 @@ def find_c_compiler():
     raise MKException('C compiler was not found. Try to set the environment variable CC with the C compiler available in your system.')
 
 def set_version(major, minor, build, revision):
-    global VER_MAJOR, VER_MINOR, VER_BUILD, VER_TWEAK, GIT_DESCRIBE
+    global ASSEMBLY_VERSION, VER_MAJOR, VER_MINOR, VER_BUILD, VER_TWEAK, GIT_DESCRIBE
+
+    # We need to give the assembly a build specific version
+    # global version overrides local default expression
+    if ASSEMBLY_VERSION is not None:
+        versionSplits = ASSEMBLY_VERSION.split('.')
+        if len(versionSplits) > 3:
+            VER_MAJOR = versionSplits[0]
+            VER_MINOR = versionSplits[1]
+            VER_BUILD = versionSplits[2]
+            VER_TWEAK = versionSplits[3]
+            print("Set Assembly Version (BUILD):", VER_MAJOR, VER_MINOR, VER_BUILD, VER_TWEAK)
+            return
+
+    # use parameters to set up version if not provided by script args            
     VER_MAJOR = major
     VER_MINOR = minor
     VER_BUILD = build
     VER_TWEAK = revision
+
+    # update VER_TWEAK base on github     
     if GIT_DESCRIBE:
         branch = check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
         VER_TWEAK = int(check_output(['git', 'rev-list', '--count', 'HEAD']))
-
+    
+    print("Set Assembly Version (DEFAULT):", VER_MAJOR, VER_MINOR, VER_BUILD, VER_TWEAK)
+    
 def get_version():
     return (VER_MAJOR, VER_MINOR, VER_BUILD, VER_TWEAK)
 
@@ -592,7 +628,6 @@ if os.name == 'nt':
 elif os.name == 'posix':
     if os.uname()[0] == 'Darwin':
         IS_OSX=True
-        PREFIX="/usr/local"
     elif os.uname()[0] == 'Linux':
         IS_LINUX=True
     elif os.uname()[0] == 'GNU':
@@ -603,6 +638,8 @@ elif os.name == 'posix':
         IS_NETBSD=True
     elif os.uname()[0] == 'OpenBSD':
         IS_OPENBSD=True
+    elif os.uname()[0] == 'SunOS':
+        IS_SUNOS=True
     elif os.uname()[0][:6] == 'CYGWIN':
         IS_CYGWIN=True
         if (CC != None and "mingw" in CC):
@@ -613,7 +650,11 @@ elif os.name == 'posix':
             LINUX_X64=True
         else:
             LINUX_X64=False
-            
+
+
+if os.name == 'posix' and os.uname()[4] == 'arm64':
+    IS_ARCH_ARM64 = True
+
 
 def display_help(exit_code):
     print("mk_make.py: Z3 Makefile generator\n")
@@ -637,12 +678,14 @@ def display_help(exit_code):
         print("  -x, --x64                     create 64 binary when using Visual Studio.")
     else:
         print("  --x86                         force 32-bit x86 build on x64 systems.")
+    print("  --arm64=<bool>                    forcearm64 bit build  on/off (supported for Darwin).")
     print("  -m, --makefiles               generate only makefiles.")
     if IS_WINDOWS:
         print("  -v, --vsproj                  generate Visual Studio Project Files.")
         print("  --optimize                    generate optimized code during linking.")
     print("  --dotnet                      generate .NET platform bindings.")
     print("  --dotnet-key=<file>           sign the .NET assembly using the private key in <file>.")
+    print("  --assembly-version=<x.x.x.x>  provide version number for build")
     print("  --java                        generate Java bindings.")
     print("  --ml                          generate OCaml bindings.")
     print("  --js                          generate JScript bindings.")
@@ -668,8 +711,6 @@ def display_help(exit_code):
     print("  OCAMLFIND  Ocaml find tool (only relevant with --ml)")
     print("  OCAMLOPT   Ocaml native compiler (only relevant with --ml)")
     print("  OCAML_LIB  Ocaml library directory (only relevant with --ml)")
-    print("  CSC        C# Compiler (only relevant if .NET bindings are enabled)")
-    print("  GACUTIL    GAC Utility (only relevant if .NET bindings are enabled)")
     print("  Z3_INSTALL_BIN_DIR Install directory for binaries relative to install prefix")
     print("  Z3_INSTALL_LIB_DIR Install directory for libraries relative to install prefix")
     print("  Z3_INSTALL_INCLUDE_DIR Install directory for header files relative to install prefix")
@@ -679,14 +720,14 @@ def display_help(exit_code):
 # Parse configuration option for mk_make script
 def parse_options():
     global VERBOSE, DEBUG_MODE, IS_WINDOWS, VS_X64, ONLY_MAKEFILES, SHOW_CPPS, VS_PROJ, TRACE, VS_PAR, VS_PAR_NUM
-    global DOTNET_CORE_ENABLED, DOTNET_KEY_FILE, JAVA_ENABLED, ML_ENABLED, JS_ENABLED, STATIC_LIB, STATIC_BIN, PREFIX, GMP, PYTHON_PACKAGE_DIR, GPROF, GIT_HASH, GIT_DESCRIBE, PYTHON_INSTALL_ENABLED, PYTHON_ENABLED, ESRP_SIGN
+    global DOTNET_CORE_ENABLED, DOTNET_KEY_FILE, ASSEMBLY_VERSION, JAVA_ENABLED, ML_ENABLED, STATIC_LIB, STATIC_BIN, PREFIX, GMP, PYTHON_PACKAGE_DIR, GPROF, GIT_HASH, GIT_DESCRIBE, PYTHON_INSTALL_ENABLED, PYTHON_ENABLED
     global LINUX_X64, SLOW_OPTIMIZE, LOG_SYNC, SINGLE_THREADED
-    global GUARD_CF, ALWAYS_DYNAMIC_BASE
+    global GUARD_CF, ALWAYS_DYNAMIC_BASE, IS_ARCH_ARM64
     try:
         options, remainder = getopt.gnu_getopt(sys.argv[1:],
-                                               'b:df:sxhmcvtnp:gj',
-                                               ['build=', 'debug', 'silent', 'x64', 'help', 'makefiles', 'showcpp', 'vsproj', 'guardcf',
-                                                'trace', 'dotnet', 'dotnet-key=', 'esrp', 'staticlib', 'prefix=', 'gmp', 'java', 'parallel=', 'gprof', 'js',
+                                               'b:df:sxa:hmcvtnp:gj',
+                                               ['build=', 'debug', 'silent', 'x64', 'arm64=', 'help', 'makefiles', 'showcpp', 'vsproj', 'guardcf',
+                                                'trace', 'dotnet', 'dotnet-key=', 'assembly-version=', 'staticlib', 'prefix=', 'gmp', 'java', 'parallel=', 'gprof', 'js',
                                                 'githash=', 'git-describe', 'x86', 'ml', 'optimize', 'pypkgdir=', 'python', 'staticbin', 'log-sync', 'single-threaded'])
     except:
         print("ERROR: Invalid command line option")
@@ -708,6 +749,8 @@ def parse_options():
             VS_X64 = True
         elif opt in ('--x86'):
             LINUX_X64=False
+        elif opt in ('--arm64'):
+            IS_ARCH_ARM64 = arg in ('true','on','True','TRUE')
         elif opt in ('-h', '--help'):
             display_help(0)
         elif opt in ('-m', '--makefiles'):
@@ -722,8 +765,8 @@ def parse_options():
             DOTNET_CORE_ENABLED = True
         elif opt in ('--dotnet-key'):
             DOTNET_KEY_FILE = arg
-        elif opt in ('--esrp'):
-            ESRP_SIGN = True
+        elif opt in ('--assembly-version'):
+            ASSEMBLY_VERSION = arg
         elif opt in ('--staticlib'):
             STATIC_LIB = True
         elif opt in ('--staticbin'):
@@ -749,8 +792,6 @@ def parse_options():
             GIT_DESCRIBE = True
         elif opt in ('', '--ml'):
             ML_ENABLED = True
-        elif opt == "--js":
-            JS_ENABLED = True
         elif opt in ('', '--log-sync'):
             LOG_SYNC = True
         elif opt == '--single-threaded':
@@ -769,7 +810,7 @@ def parse_options():
 # Return a list containing a file names included using '#include' in
 # the given C/C++ file named fname.
 def extract_c_includes(fname):
-    result = []
+    result = {}
     # We look for well behaved #include directives
     std_inc_pat     = re.compile("[ \t]*#include[ \t]*\"(.*)\"[ \t]*")
     system_inc_pat  = re.compile("[ \t]*#include[ \t]*\<.*\>[ \t]*")
@@ -780,13 +821,13 @@ def extract_c_includes(fname):
     linenum = 1
     for line in f:
         m1 = std_inc_pat.match(line)
-        if m1: 
+        if m1:
             root_file_name = m1.group(1)
             slash_pos =  root_file_name.rfind('/')
             if slash_pos >= 0  and root_file_name.find("..") < 0 : #it is a hack for lp include files that behave as continued from "src"
                 # print(root_file_name)
                 root_file_name = root_file_name[slash_pos+1:]
-            result.append(root_file_name)
+            result[root_file_name] = m1.group(1)
         elif not system_inc_pat.match(line) and non_std_inc_pat.match(line):
             raise MKException("Invalid #include directive at '%s':%s" % (fname, line))
         linenum = linenum + 1
@@ -812,16 +853,6 @@ def set_build_dir(d):
     global BUILD_DIR, REV_BUILD_DIR
     BUILD_DIR = norm_path(d)
     REV_BUILD_DIR = reverse_path(d)
-
-def set_z3js_dir(p):
-    global SRC_DIR, Z3JS_SRC_DIR
-    p = norm_path(p)
-    full = os.path.join(SRC_DIR, p)
-    if not os.path.exists(full):
-        raise MKException("Python bindings directory '%s' does not exist" % full)
-    Z3JS_SRC_DIR = full
-    if VERBOSE:
-        print("Js bindings directory was detected.")
 
 def set_z3py_dir(p):
     global SRC_DIR, Z3PY_SRC_DIR
@@ -858,9 +889,6 @@ def get_components():
 def get_z3py_dir():
     return Z3PY_SRC_DIR
 
-# Return directory where the js bindings are located
-def get_z3js_dir():
-    return Z3JS_SRC_DIR
 
 # Return true if in verbose mode
 def is_verbose():
@@ -871,9 +899,6 @@ def is_java_enabled():
 
 def is_ml_enabled():
     return ML_ENABLED
-
-def is_js_enabled():
-    return JS_ENABLED
 
 def is_dotnet_core_enabled():
     return DOTNET_CORE_ENABLED
@@ -921,20 +946,23 @@ def is_CXX_clangpp():
         return is_clang_in_gpp_form(CXX)
     return is_compiler(CXX, 'clang++')
 
+def get_files_with_ext(path, ext):
+    return filter(lambda f: f.endswith(ext), os.listdir(path))
+
 def get_cpp_files(path):
-    return filter(lambda f: f.endswith('.cpp'), os.listdir(path))
+    return get_files_with_ext(path,'.cpp')
 
 def get_c_files(path):
-    return filter(lambda f: f.endswith('.c'), os.listdir(path))
+    return get_files_with_ext(path,'.c')
 
 def get_cs_files(path):
-    return filter(lambda f: f.endswith('.cs'), os.listdir(path))
+    return get_files_with_ext(path,'.cs')
 
 def get_java_files(path):
-    return filter(lambda f: f.endswith('.java'), os.listdir(path))
+    return get_files_with_ext(path,'.java')
 
 def get_ml_files(path):
-    return filter(lambda f: f.endswith('.ml'), os.listdir(path))
+    return get_files_with_ext(path,'.ml')
 
 def find_all_deps(name, deps):
     new_deps = []
@@ -971,15 +999,52 @@ class Component:
     # Find fname in the include paths for the given component.
     # ownerfile is only used for creating error messages.
     # That is, we were looking for fname when processing ownerfile
-    def find_file(self, fname, ownerfile):
+    def find_file(self, fname, ownerfile, orig_include=None):
         full_fname = os.path.join(self.src_dir, fname)
+
+        # Store all our possible locations
+        possibilities = set()
+
+        # If the our file exists in the current directory, then we store it
         if os.path.exists(full_fname):
-            return self
+
+            # We cannot return here, as we might have files with the same
+            # basename, but different include paths
+            possibilities.add(self)
+
         for dep in self.deps:
             c_dep = get_component(dep)
             full_fname = os.path.join(c_dep.src_dir, fname)
             if os.path.exists(full_fname):
-                return c_dep
+                possibilities.add(c_dep)
+
+        if possibilities:
+
+            # We have ambiguity
+            if len(possibilities) > 1:
+
+                # We expect orig_path to be non-None here, so we can disambiguate
+                assert orig_include is not None
+
+                # Get the original directory name
+                orig_dir = os.path.dirname(orig_include)
+
+                # Iterate through all of the possibilities
+                for possibility in possibilities:
+
+                    path = possibility.path.replace("\\","/")
+                    # If we match the suffix of the path ...
+                    if path.endswith(orig_dir):
+
+                        # ... use our new match
+                        return possibility
+
+            # This means we didn't make an exact match ...
+            #
+            # We return any one possibility, just to ensure we don't break Z3's
+            # builds
+            return possibilities.pop()
+
         raise MKException("Failed to find include file '%s' for '%s' when processing '%s'." % (fname, ownerfile, self.name))
 
     # Display all dependencies of file basename located in the given component directory.
@@ -987,16 +1052,16 @@ class Component:
     def add_cpp_h_deps(self, out, basename):
         includes = extract_c_includes(os.path.join(self.src_dir, basename))
         out.write(os.path.join(self.to_src_dir, basename))
-        for include in includes:
-            owner = self.find_file(include, basename)
+        for include, orig_include in includes.items():
+            owner = self.find_file(include, basename, orig_include)
             out.write(' %s.node' % os.path.join(owner.build_dir, include))
 
     # Add a rule for each #include directive in the file basename located at the current component.
     def add_rule_for_each_include(self, out, basename):
         fullname = os.path.join(self.src_dir, basename)
         includes = extract_c_includes(fullname)
-        for include in includes:
-            owner = self.find_file(include, fullname)
+        for include, orig_include in includes.items():
+            owner = self.find_file(include, fullname, orig_include)
             owner.add_h_rule(out, include)
 
     # Display a Makefile rule for an include file located in the given component directory.
@@ -1042,8 +1107,8 @@ class Component:
                 dependencies.add(os.path.join(self.to_src_dir, cppfile))
                 self.add_rule_for_each_include(out, cppfile)
                 includes = extract_c_includes(os.path.join(self.src_dir, cppfile))
-                for include in includes:
-                    owner = self.find_file(include, cppfile)
+                for include, orig_include in includes.items():
+                    owner = self.find_file(include, cppfile, orig_include)
                     dependencies.add('%s.node' % os.path.join(owner.build_dir, include))
             for cppfile in cppfiles:
                 out.write('%s$(OBJ_EXT) ' % os.path.join(self.build_dir, os.path.splitext(cppfile)[0]))
@@ -1571,7 +1636,7 @@ class PythonInstallComponent(Component):
                                       os.path.join(self.pythonPkgDir,'z3'),
                                       in_prefix=self.in_prefix_install)
 
-        if PYTHON_PACKAGE_DIR != distutils.sysconfig.get_python_lib():
+        if PYTHON_PACKAGE_DIR != sysconfig.get_path('purelib'):
             out.write('\t@echo Z3Py was installed at \'%s\', make sure this directory is in your PYTHONPATH environment variable.' % PYTHON_PACKAGE_DIR)
 
     def mk_uninstall(self, out):
@@ -1614,7 +1679,7 @@ def set_key_file(self):
        else:
            print("Keyfile '%s' could not be found; %s.dll will be unsigned." % (self.key_file, self.dll_name))
            self.key_file = None
-    
+
 
 # build for dotnet core
 class DotNetDLLComponent(Component):
@@ -1628,7 +1693,7 @@ class DotNetDLLComponent(Component):
         self.assembly_info_dir = assembly_info_dir
         self.key_file = default_key_file
 
-    
+
     def mk_makefile(self, out):
         if not is_dotnet_core_enabled():
             return
@@ -1644,24 +1709,28 @@ class DotNetDLLComponent(Component):
             out.write(' ')
             out.write(cs_file)
         out.write('\n')
-        
+
         set_key_file(self)
         key = ""
         if not self.key_file is None:
             key = "<AssemblyOriginatorKeyFile>%s</AssemblyOriginatorKeyFile>" % self.key_file
             key += "\n<SignAssembly>true</SignAssembly>"
 
-        version = get_version_string(3)
+        version = get_version_string(4)
+
+        print("Version output to csproj:", version)
 
         core_csproj_str = """<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>netstandard1.4</TargetFramework>
+    <LangVersion>8.0</LangVersion>
     <DefineConstants>$(DefineConstants);DOTNET_CORE</DefineConstants>
-    <DebugType>portable</DebugType>
+    <DebugType>full</DebugType>
     <AssemblyName>Microsoft.Z3</AssemblyName>
     <OutputType>Library</OutputType>
     <PackageId>Microsoft.Z3</PackageId>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <RuntimeFrameworkVersion>1.0.4</RuntimeFrameworkVersion>
     <Version>%s</Version>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
@@ -1686,7 +1755,7 @@ class DotNetDLLComponent(Component):
             ous.write(core_csproj_str)
 
         dotnetCmdLine = [DOTNET, "build", csproj]
-        
+
         dotnetCmdLine.extend(['-c'])
         if DEBUG_MODE:
             dotnetCmdLine.extend(['Debug'])
@@ -1694,90 +1763,20 @@ class DotNetDLLComponent(Component):
             dotnetCmdLine.extend(['Release'])
 
         path = os.path.join(os.path.abspath(BUILD_DIR), ".")
-        dotnetCmdLine.extend(['-o', path])
-            
+        dotnetCmdLine.extend(['-o', "\"%s\"" % path])
+
         MakeRuleCmd.write_cmd(out, ' '.join(dotnetCmdLine))
-        self.sign_esrp(out)
-        out.write('\n')        
+        out.write('\n')
         out.write('%s: %s\n\n' % (self.name, dllfile))
-
-    def sign_esrp(self, out):
-        global ESRP_SIGNx
-        print("esrp-sign", ESRP_SIGN)
-        if not ESRP_SIGN:
-            return
-        
-        import uuid
-        guid = str(uuid.uuid4())
-        path = os.path.abspath(BUILD_DIR).replace("\\","\\\\")        
-        assemblySignStr = """
-{
-  "Version": "1.0.0",
-  "SignBatches"
-  :
-  [
-   {
-    "SourceLocationType": "UNC",
-    "SourceRootDirectory": "%s",
-    "DestinationLocationType": "UNC",
-    "DestinationRootDirectory": "c:\\\\ESRP\\\\output",
-    "SignRequestFiles": [
-     {
-      "CustomerCorrelationId": "%s",
-      "SourceLocation": "libz3.dll",
-      "DestinationLocation": "libz3.dll"
-     },
-     {
-      "CustomerCorrelationId": "%s",
-      "SourceLocation": "Microsoft.Z3.dll",
-      "DestinationLocation": "Microsoft.Z3.dll"
-     }
-    ],
-    "SigningInfo": {
-     "Operations": [
-      {
-       "KeyCode" : "CP-230012",
-       "OperationCode" : "SigntoolSign",
-       "Parameters" : {
-        "OpusName": "Microsoft",
-        "OpusInfo": "http://www.microsoft.com",
-        "FileDigest": "/fd \\"SHA256\\"",
-        "PageHash": "/NPH",
-        "TimeStamp": "/tr \\"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\\" /td sha256"
-       },
-       "ToolName" : "sign",
-       "ToolVersion" : "1.0"
-      },
-      {
-       "KeyCode" : "CP-230012",
-       "OperationCode" : "SigntoolVerify",
-       "Parameters" : {},
-       "ToolName" : "sign",
-       "ToolVersion" : "1.0"
-      }
-     ]
-    }
-   }
-  ]
-}       """ % (path, guid, guid)
-        assemblySign = os.path.join(os.path.abspath(BUILD_DIR), 'dotnet', 'assembly-sign-input.json')
-        with open(assemblySign, 'w') as ous:
-            ous.write(assemblySignStr)
-        outputFile = os.path.join(os.path.abspath(BUILD_DIR), 'dotnet', "esrp-out.json")
-        esrpCmdLine = ["esrpclient.exe", "sign", "-a", "C:\\esrp\\config\\authorization.json", "-p", "C:\\esrp\\config\\policy.json", "-i", assemblySign, "-o", outputFile]
-        MakeRuleCmd.write_cmd(out, ' '.join(esrpCmdLine))
-        MakeRuleCmd.write_cmd(out, "move /Y C:\\esrp\\output\\libz3.dll .")
-        MakeRuleCmd.write_cmd(out, "move /Y C:\\esrp\\output\\Microsoft.Z3.dll .")
-
 
     def main_component(self):
         return is_dotnet_core_enabled()
-    
+
     def has_assembly_info(self):
         # TBD: is this required for dotnet core given that version numbers are in z3.csproj file?
         return False
 
-    
+
     def mk_win_dist(self, build_path, dist_path):
         if is_dotnet_core_enabled():
             mk_dir(os.path.join(dist_path, INSTALL_BIN_DIR))
@@ -1785,6 +1784,8 @@ class DotNetDLLComponent(Component):
                         '%s.dll' % os.path.join(dist_path, INSTALL_BIN_DIR, self.dll_name))
             shutil.copy('%s.pdb' % os.path.join(build_path, self.dll_name),
                         '%s.pdb' % os.path.join(dist_path, INSTALL_BIN_DIR, self.dll_name))
+            shutil.copy('%s.xml' % os.path.join(build_path, self.dll_name),
+                        '%s.xml' % os.path.join(dist_path, INSTALL_BIN_DIR, self.dll_name))
             shutil.copy('%s.deps.json' % os.path.join(build_path, self.dll_name),
                         '%s.deps.json' % os.path.join(dist_path, INSTALL_BIN_DIR, self.dll_name))
             if DEBUG_MODE:
@@ -1796,6 +1797,8 @@ class DotNetDLLComponent(Component):
             mk_dir(os.path.join(dist_path, INSTALL_BIN_DIR))
             shutil.copy('%s.dll' % os.path.join(build_path, self.dll_name),
                         '%s.dll' % os.path.join(dist_path, INSTALL_BIN_DIR, self.dll_name))
+            shutil.copy('%s.xml' % os.path.join(build_path, self.dll_name),
+                        '%s.xml' % os.path.join(dist_path, INSTALL_BIN_DIR, self.dll_name))
             shutil.copy('%s.deps.json' % os.path.join(build_path, self.dll_name),
                         '%s.deps.json' % os.path.join(dist_path, INSTALL_BIN_DIR, self.dll_name))
 
@@ -1839,6 +1842,8 @@ class JavaDLLComponent(Component):
                 t = t.replace('PLATFORM', 'netbsd')
             elif IS_OPENBSD:
                 t = t.replace('PLATFORM', 'openbsd')
+            elif IS_SUNOS:
+                t = t.replace('PLATFORM', 'SunOS')
             elif IS_CYGWIN:
                 t = t.replace('PLATFORM', 'cygwin')
             elif IS_MSYS2:
@@ -1849,6 +1854,9 @@ class JavaDLLComponent(Component):
             if IS_WINDOWS: # On Windows, CL creates a .lib file to link against.
                 out.write('\t$(SLINK) $(SLINK_OUT_FLAG)libz3java$(SO_EXT) $(SLINK_FLAGS) %s$(OBJ_EXT) libz3$(LIB_EXT)\n' %
                           os.path.join('api', 'java', 'Native'))
+            elif IS_OSX and IS_ARCH_ARM64:
+                out.write('\t$(SLINK) $(SLINK_OUT_FLAG)libz3java$(SO_EXT) $(SLINK_FLAGS) -arch arm64 %s$(OBJ_EXT) libz3$(SO_EXT)\n' %
+                          os.path.join('api', 'java', 'Native'))                
             else:
                 out.write('\t$(SLINK) $(SLINK_OUT_FLAG)libz3java$(SO_EXT) $(SLINK_FLAGS) %s$(OBJ_EXT) libz3$(SO_EXT)\n' %
                           os.path.join('api', 'java', 'Native'))
@@ -1863,9 +1871,9 @@ class JavaDLLComponent(Component):
             #if IS_WINDOWS:
             JAVAC = '"%s"' % JAVAC
             JAR = '"%s"' % JAR
-            t = ('\t%s %s.java -d %s\n' % (JAVAC, os.path.join(self.to_src_dir, 'enumerations', '*'), os.path.join('api', 'java', 'classes')))
+            t = ('\t%s -source 1.8 -target 1.8 %s.java -d %s\n' % (JAVAC, os.path.join(self.to_src_dir, 'enumerations', '*'), os.path.join('api', 'java', 'classes')))
             out.write(t)
-            t = ('\t%s -cp %s %s.java -d %s\n' % (JAVAC,
+            t = ('\t%s -source 1.8 -target 1.8 -cp %s %s.java -d %s\n' % (JAVAC,
                                                   os.path.join('api', 'java', 'classes'),
                                                   os.path.join(self.to_src_dir, '*'),
                                                   os.path.join('api', 'java', 'classes')))
@@ -1977,11 +1985,11 @@ class MLComponent(Component):
             src_dir = self.to_src_dir
             mk_dir(os.path.join(BUILD_DIR, self.sub_dir))
             api_src = get_component(API_COMPONENT).to_src_dir
-            # remove /GL and -std=c++11; the ocaml tools don't like them.
-            if IS_WINDOWS:                
+            # remove /GL and -std=c++17; the ocaml tools don't like them.
+            if IS_WINDOWS:
                 out.write('CXXFLAGS_OCAML=$(CXXFLAGS:/GL=)\n')
             else:
-                out.write('CXXFLAGS_OCAML=$(subst -std=c++11,,$(CXXFLAGS))\n')
+                out.write('CXXFLAGS_OCAML=$(subst -std=c++17,,$(CXXFLAGS))\n')
 
             substitutions = { 'VERSION': "{}.{}.{}.{}".format(VER_MAJOR, VER_MINOR, VER_BUILD, VER_TWEAK) }
 
@@ -2031,11 +2039,17 @@ class MLComponent(Component):
 
             OCAMLMKLIB = 'ocamlmklib'
 
-            LIBZ3 = '-cclib -l' + z3link
+            LIBZ3 = '-l' + z3link + ' -lstdc++'
             if is_cygwin() and not(is_cygwin_mingw()):
                 LIBZ3 = z3linkdep
 
             LIBZ3 = LIBZ3 + ' ' + ' '.join(map(lambda x: '-cclib ' + x, LDFLAGS.split()))
+
+            stubs_install_path = '$$(%s printconf destdir)/stublibs' % OCAMLFIND
+            if not STATIC_LIB:
+                loadpath = '-ccopt -L' + stubs_install_path
+                dllpath = '-dllpath ' + stubs_install_path
+                LIBZ3 = LIBZ3 + ' ' + loadpath + ' ' + dllpath
 
             if DEBUG_MODE and not(is_cygwin()):
                 # Some ocamlmklib's don't like -g; observed on cygwin, but may be others as well.
@@ -2043,15 +2057,22 @@ class MLComponent(Component):
 
             z3mls = os.path.join(self.sub_dir, 'z3ml')
 
+            LIBZ3ML = ''
+            if STATIC_LIB:
+                LIBZ3ML = '-oc ' + os.path.join(self.sub_dir, 'z3ml-static')
+
             out.write('%s.cma: %s %s %s\n' % (z3mls, cmos, stubso, z3linkdep))
-            out.write('\t%s -o %s -I %s %s %s %s\n' % (OCAMLMKLIB, z3mls, self.sub_dir, stubso, cmos, LIBZ3))
+            out.write('\t%s -o %s %s -I %s -L. %s %s %s\n' % (OCAMLMKLIB, z3mls, LIBZ3ML, self.sub_dir, stubso, cmos, LIBZ3))
             out.write('%s.cmxa: %s %s %s %s.cma\n' % (z3mls, cmxs, stubso, z3linkdep, z3mls))
-            out.write('\t%s -o %s -I %s %s %s %s\n' % (OCAMLMKLIB, z3mls, self.sub_dir, stubso, cmxs, LIBZ3))
+            out.write('\t%s -o %s %s -I %s -L. %s %s %s\n' % (OCAMLMKLIB, z3mls, LIBZ3ML, self.sub_dir, stubso, cmxs, LIBZ3))
             out.write('%s.cmxs: %s.cmxa\n' % (z3mls, z3mls))
             out.write('\t%s -linkall -shared -o %s.cmxs -I . -I %s %s.cmxa\n' % (OCAMLOPTF, z3mls, self.sub_dir, z3mls))
 
             out.write('\n')
             out.write('ml: %s.cma %s.cmxa %s.cmxs\n' % (z3mls, z3mls, z3mls))
+            if IS_OSX:
+                out.write('\tinstall_name_tool -id %s/libz3.dylib libz3.dylib\n' % (stubs_install_path))
+                out.write('\tinstall_name_tool -change libz3.dylib %s/libz3.dylib api/ml/dllz3ml.so\n' % (stubs_install_path))
             out.write('\n')
 
             if IS_WINDOWS:
@@ -2064,6 +2085,7 @@ class MLComponent(Component):
                 self.mk_uninstall(out)
                 out.write('\n')
 
+    # The following three functions may be out of date.
     def mk_install_deps(self, out):
         if is_ml_enabled() and self._install_bindings():
             out.write(get_component(Z3_DLL_COMPONENT).dll_name + '$(SO_EXT) ')
@@ -2104,7 +2126,7 @@ class MLComponent(Component):
             out.write(' %s' % ((os.path.join(self.sub_dir, 'z3ml.cmxa'))))
             out.write(' %s' % ((os.path.join(self.sub_dir, 'z3ml.cmxs'))))
             out.write(' %s' % ((os.path.join(self.sub_dir, 'dllz3ml'))))
-            if is_windows() or is_cygwin_mingw():
+            if is_windows() or is_cygwin_mingw() or is_msys2():
                 out.write('.dll')
             else:
                 out.write('.so') # .so also on OSX!
@@ -2289,10 +2311,10 @@ class MLExampleComponent(ExampleComponent):
             for mlfile in get_ml_files(self.ex_dir):
                 out.write(' %s' % os.path.join(self.to_ex_dir, mlfile))
             out.write('\n')
-            out.write('\t%s ' % OCAMLC)
+            out.write('\tocamlfind %s ' % OCAMLC)
             if DEBUG_MODE:
                 out.write('-g ')
-            out.write('-custom -o ml_example.byte -I -zarith -I api/ml -cclib "-L. -lz3" zarith.cma z3ml.cma')
+            out.write('-custom -o ml_example.byte -package zarith -I api/ml -cclib "-L. -lpthread -lstdc++ -lz3" -linkpkg z3ml.cma')
             for mlfile in get_ml_files(self.ex_dir):
                 out.write(' %s/%s' % (self.to_ex_dir, mlfile))
             out.write('\n')
@@ -2300,14 +2322,49 @@ class MLExampleComponent(ExampleComponent):
             for mlfile in get_ml_files(self.ex_dir):
                 out.write(' %s' % os.path.join(self.to_ex_dir, mlfile))
             out.write('\n')
-            out.write('\t%s ' % OCAMLOPT)
+            out.write('\tocamlfind %s ' % OCAMLOPT)
             if DEBUG_MODE:
                 out.write('-g ')
-            out.write('-o ml_example$(EXE_EXT) -I -zarith -I api/ml -cclib "-L. -lz3" zarith.cmxa z3ml.cmxa')
+            out.write('-o ml_example$(EXE_EXT) -package zarith -I api/ml -cclib "-L. -lpthread -lstdc++ -lz3" -linkpkg z3ml.cmxa')
             for mlfile in get_ml_files(self.ex_dir):
                 out.write(' %s/%s' % (self.to_ex_dir, mlfile))
             out.write('\n')
             out.write('_ex_%s: ml_example.byte ml_example$(EXE_EXT)\n\n' % self.name)
+
+        debug_opt = '-g ' if DEBUG_MODE else ''
+
+        if STATIC_LIB:
+            opam_z3_opts = '-thread -package z3-static -linkpkg'
+            ml_post_install_tests = [
+                (OCAMLC,              'ml_example_static.byte'),
+                (OCAMLC + ' -custom', 'ml_example_static_custom.byte'),
+                (OCAMLOPT,            'ml_example_static$(EXE_EXT)')
+            ]
+        else:
+            opam_z3_opts = '-thread -package z3 -linkpkg'
+            ml_post_install_tests = [
+                (OCAMLC,              'ml_example_shared.byte'),
+                (OCAMLC + ' -custom', 'ml_example_shared_custom.byte'),
+                (OCAMLOPT,            'ml_example_shared$(EXE_EXT)')
+            ]
+
+        for ocaml_compiler, testname in ml_post_install_tests:
+            out.write(testname + ':')
+            for mlfile in get_ml_files(self.ex_dir):
+                out.write(' %s' % os.path.join(self.to_ex_dir, mlfile))
+            out.write('\n')
+            out.write('\tocamlfind %s -o %s %s %s ' % (ocaml_compiler, debug_opt, testname, opam_z3_opts))
+            for mlfile in get_ml_files(self.ex_dir):
+                out.write(' %s/%s' % (self.to_ex_dir, mlfile))
+            out.write('\n')
+
+        if STATIC_LIB:
+            out.write('_ex_ml_example_post_install: ml_example_static.byte ml_example_static_custom.byte ml_example_static$(EXE_EXT)\n')
+        else:
+            out.write('_ex_ml_example_post_install: ml_example_shared.byte ml_example_shared_custom.byte ml_example_shared$(EXE_EXT)\n')
+
+        out.write('\n')
+
 
 class PythonExampleComponent(ExampleComponent):
     def __init__(self, name, path):
@@ -2345,6 +2402,10 @@ def reg_component(name, c):
 
 def add_lib(name, deps=[], path=None, includes2install=[]):
     c = LibComponent(name, path, deps, includes2install)
+    reg_component(name, c)
+
+def add_clib(name, deps=[], path=None, includes2install=[]):
+    c = CLibComponent(name, path, deps, includes2install)
     reg_component(name, c)
 
 def add_hlib(name, path=None, includes2install=[]):
@@ -2415,8 +2476,9 @@ def mk_config():
     if ONLY_MAKEFILES:
         return
     config = open(os.path.join(BUILD_DIR, 'config.mk'), 'w')
-    global CXX, CC, GMP, CPPFLAGS, CXXFLAGS, LDFLAGS, EXAMP_DEBUG_FLAG, FPMATH_FLAGS, LOG_SYNC, SINGLE_THREADED
+    global CXX, CC, GMP, GUARD_CF, STATIC_BIN, GIT_HASH, CPPFLAGS, CXXFLAGS, LDFLAGS, EXAMP_DEBUG_FLAG, FPMATH_FLAGS, LOG_SYNC, SINGLE_THREADED, IS_ARCH_ARM64
     if IS_WINDOWS:
+        CXXFLAGS = '/nologo /Zi /D WIN32 /D _WINDOWS /EHsc /GS /Gd /std:c++17'
         config.write(
             'CC=cl\n'
             'CXX=cl\n'
@@ -2457,7 +2519,7 @@ def mk_config():
                 'SLINK_FLAGS=/nologo /LDd\n' % static_opt)
             if VS_X64:
                 config.write(
-                    'CXXFLAGS=/c /Zi /nologo /W3 /WX- /Od /Oy- /D WIN32 /D _DEBUG /D Z3DEBUG /D _CONSOLE /D _TRACE /D _WINDOWS /Gm- /EHsc /RTC1 /GS /Gd %s %s\n' % (extra_opt, static_opt))
+                    'CXXFLAGS=/c %s /W3 /WX- /Od /Oy- /D _DEBUG /D Z3DEBUG /D _CONSOLE /D _TRACE /Gm- /RTC1 %s %s\n' % (CXXFLAGS, extra_opt, static_opt))
                 config.write(
                     'LINK_EXTRA_FLAGS=/link /DEBUG /MACHINE:X64 /SUBSYSTEM:CONSOLE /INCREMENTAL:NO /STACK:8388608 /OPT:REF /OPT:ICF /TLBID:1 /DYNAMICBASE /NXCOMPAT %s\n'
                     'SLINK_EXTRA_FLAGS=/link /DEBUG /MACHINE:X64 /SUBSYSTEM:WINDOWS /INCREMENTAL:NO /STACK:8388608 /OPT:REF /OPT:ICF /TLBID:1 %s %s\n' % (link_extra_opt, maybe_disable_dynamic_base, link_extra_opt))
@@ -2466,7 +2528,7 @@ def mk_config():
                 exit(1)
             else:
                 config.write(
-                    'CXXFLAGS=/c /Zi /nologo /W3 /WX- /Od /Oy- /D WIN32 /D _DEBUG /D Z3DEBUG /D _CONSOLE /D _TRACE /D _WINDOWS /Gm- /EHsc /RTC1 /GS /Gd /arch:SSE2 %s %s\n' % (extra_opt, static_opt))
+                    'CXXFLAGS=/c %s /W3 /WX- /Od /Oy- /D _DEBUG /D Z3DEBUG /D _CONSOLE /D _TRACE /Gm- /RTC1 /arch:SSE2 %s %s\n' % (CXXFLAGS, extra_opt, static_opt))
                 config.write(
                     'LINK_EXTRA_FLAGS=/link /DEBUG /MACHINE:X86 /SUBSYSTEM:CONSOLE /INCREMENTAL:NO /STACK:8388608 /OPT:REF /OPT:ICF /TLBID:1 /DYNAMICBASE /NXCOMPAT %s\n'
                     'SLINK_EXTRA_FLAGS=/link /DEBUG /MACHINE:X86 /SUBSYSTEM:WINDOWS /INCREMENTAL:NO /STACK:8388608 /OPT:REF /OPT:ICF /TLBID:1 %s %s\n' % (link_extra_opt, maybe_disable_dynamic_base, link_extra_opt))
@@ -2482,7 +2544,7 @@ def mk_config():
                 extra_opt = '%s /D _TRACE ' % extra_opt
             if VS_X64:
                 config.write(
-                    'CXXFLAGS=/c%s /Zi /nologo /W3 /WX- /O2 /D _EXTERNAL_RELEASE /D WIN32 /D NDEBUG /D _LIB /D _WINDOWS /D _UNICODE /D UNICODE /Gm- /EHsc /GS /Gd /GF /Gy /TP %s %s\n' % (GL, extra_opt, static_opt))
+                    'CXXFLAGS=/c%s %s /W3 /WX- /O2 /D _EXTERNAL_RELEASE /D NDEBUG /D _LIB /D UNICODE /Gm- /GF /Gy /TP %s %s\n' % (GL, CXXFLAGS, extra_opt, static_opt))
                 config.write(
                     'LINK_EXTRA_FLAGS=/link%s /profile /MACHINE:X64 /SUBSYSTEM:CONSOLE /STACK:8388608 %s\n'
                     'SLINK_EXTRA_FLAGS=/link%s /profile /MACHINE:X64 /SUBSYSTEM:WINDOWS /STACK:8388608 %s\n' % (LTCG, link_extra_opt, LTCG, link_extra_opt))
@@ -2491,7 +2553,7 @@ def mk_config():
                 exit(1)
             else:
                 config.write(
-                    'CXXFLAGS=/nologo /c%s /Zi /W3 /WX- /O2 /Oy- /D _EXTERNAL_RELEASE /D WIN32 /D NDEBUG /D _CONSOLE /D _WINDOWS /D ASYNC_COMMANDS /Gm- /EHsc /GS /Gd /arch:SSE2 %s %s\n' % (GL, extra_opt, static_opt))
+                    'CXXFLAGS=/c%s %s /WX- /O2 /Oy- /D _EXTERNAL_RELEASE /D NDEBUG /D _CONSOLE /D ASYNC_COMMANDS /Gm- /arch:SSE2 %s %s\n' % (GL, CXXFLAGS, extra_opt, static_opt))
                 config.write(
                     'LINK_EXTRA_FLAGS=/link%s /DEBUG /MACHINE:X86 /SUBSYSTEM:CONSOLE /INCREMENTAL:NO /STACK:8388608 /OPT:REF /OPT:ICF /TLBID:1 /DYNAMICBASE /NXCOMPAT %s\n'
                     'SLINK_EXTRA_FLAGS=/link%s /DEBUG /MACHINE:X86 /SUBSYSTEM:WINDOWS /INCREMENTAL:NO /STACK:8388608 /OPT:REF /OPT:ICF /TLBID:1 %s %s\n' % (LTCG, link_extra_opt, LTCG, maybe_disable_dynamic_base, link_extra_opt))
@@ -2532,8 +2594,8 @@ def mk_config():
             CPPFLAGS = '%s -D_MP_INTERNAL' % CPPFLAGS
         if GIT_HASH:
             CPPFLAGS = '%s -DZ3GITHASH=%s' % (CPPFLAGS, GIT_HASH)
-        CXXFLAGS = '%s -std=c++11' % CXXFLAGS
-        CXXFLAGS = '%s -fvisibility=hidden -c' % CXXFLAGS
+        CXXFLAGS = '%s -std=c++17' % CXXFLAGS
+        CXXFLAGS = '%s -fvisibility=hidden -fvisibility-inlines-hidden -c' % CXXFLAGS
         FPMATH = test_fpmath(CXX)
         CXXFLAGS = '%s %s' % (CXXFLAGS, FPMATH_FLAGS)
         if LOG_SYNC:
@@ -2556,39 +2618,30 @@ def mk_config():
             SO_EXT         = '.dylib'
             SLIBFLAGS      = '-dynamiclib'
         elif sysname == 'Linux':
-            CXXFLAGS       = '%s -D_LINUX_' % CXXFLAGS
-            OS_DEFINES     = '-D_LINUX_'
             SO_EXT         = '.so'
             SLIBFLAGS      = '-shared'
             SLIBEXTRAFLAGS = '%s -Wl,-soname,libz3.so' % SLIBEXTRAFLAGS
         elif sysname == 'GNU':
-            CXXFLAGS       = '%s -D_HURD_' % CXXFLAGS
-            OS_DEFINES     = '-D_HURD_'
             SO_EXT         = '.so'
             SLIBFLAGS      = '-shared'
         elif sysname == 'FreeBSD':
-            CXXFLAGS       = '%s -D_FREEBSD_' % CXXFLAGS
-            OS_DEFINES     = '-D_FREEBSD_'
             SO_EXT         = '.so'
             SLIBFLAGS      = '-shared'
+            SLIBEXTRAFLAGS = '%s -Wl,-soname,libz3.so' % SLIBEXTRAFLAGS
         elif sysname == 'NetBSD':
-            CXXFLAGS       = '%s -D_NETBSD_' % CXXFLAGS
-            OS_DEFINES     = '-D_NETBSD_'
             SO_EXT         = '.so'
             SLIBFLAGS      = '-shared'
         elif sysname == 'OpenBSD':
-            CXXFLAGS       = '%s -D_OPENBSD_' % CXXFLAGS
-            OS_DEFINES     = '-D_OPENBSD_'
             SO_EXT         = '.so'
             SLIBFLAGS      = '-shared'
+        elif sysname  == 'SunOS':
+            SO_EXT         = '.so'
+            SLIBFLAGS      = '-shared'
+            SLIBEXTRAFLAGS = '%s -mimpure-text' % SLIBEXTRAFLAGS
         elif sysname.startswith('CYGWIN'):
-            CXXFLAGS       = '%s -D_CYGWIN' % CXXFLAGS
-            OS_DEFINES     = '-D_CYGWIN'
             SO_EXT         = '.dll'
             SLIBFLAGS      = '-shared'
         elif sysname.startswith('MSYS_NT') or sysname.startswith('MINGW'):
-            CXXFLAGS       = '%s -D_MINGW' % CXXFLAGS
-            OS_DEFINES     = '-D_MINGW'
             SO_EXT         = '.dll'
             SLIBFLAGS      = '-shared'
             EXE_EXT        = '.exe'
@@ -2598,27 +2651,30 @@ def mk_config():
         if is64():
             if not sysname.startswith('CYGWIN') and not sysname.startswith('MSYS') and not sysname.startswith('MINGW'):
                 CXXFLAGS     = '%s -fPIC' % CXXFLAGS
-            if sysname == 'Linux':
-                CPPFLAGS = '%s -D_USE_THREAD_LOCAL' % CPPFLAGS
         elif not LINUX_X64:
             CXXFLAGS     = '%s -m32' % CXXFLAGS
             LDFLAGS      = '%s -m32' % LDFLAGS
             SLIBFLAGS    = '%s -m32' % SLIBFLAGS
         if TRACE or DEBUG_MODE:
             CPPFLAGS     = '%s -D_TRACE' % CPPFLAGS
-        if is_cygwin_mingw():
+        if is_cygwin_mingw() or is_msys2():
             # when cross-compiling with MinGW, we need to statically link its standard libraries
             # and to make it create an import library.
             SLIBEXTRAFLAGS = '%s -static-libgcc -static-libstdc++ -Wl,--out-implib,libz3.dll.a' % SLIBEXTRAFLAGS
             LDFLAGS = '%s -static-libgcc -static-libstdc++' % LDFLAGS
         if sysname == 'Linux' and machine.startswith('armv7') or machine.startswith('armv8'):
             CXXFLAGS = '%s -fpic' % CXXFLAGS
+        if IS_OSX and IS_ARCH_ARM64:
+            print("Setting arm64")
+            CXXFLAGS = '%s -arch arm64' % CXXFLAGS
+            LDFLAGS = '%s -arch arm64' % LDFLAGS
+            SLIBEXTRAFLAGS = '%s -arch arm64' % SLIBEXTRAFLAGS
 
         config.write('PREFIX=%s\n' % PREFIX)
         config.write('CC=%s\n' % CC)
         config.write('CXX=%s\n' % CXX)
         config.write('CXXFLAGS=%s %s\n' % (CPPFLAGS, CXXFLAGS))
-        config.write('CFLAGS=%s %s\n' % (CPPFLAGS, CXXFLAGS.replace('-std=c++11', '')))
+        config.write('CFLAGS=%s %s\n' % (CPPFLAGS, CXXFLAGS.replace('-std=c++17', '')))
         config.write('EXAMP_DEBUG_FLAG=%s\n' % EXAMP_DEBUG_FLAG)
         config.write('CXX_OUT_FLAG=-o \n')
         config.write('C_OUT_FLAG=-o \n')
@@ -2632,7 +2688,7 @@ def mk_config():
         config.write('LINK_FLAGS=\n')
         config.write('LINK_OUT_FLAG=-o \n')
         if is_linux() and (build_static_lib() or build_static_bin()):
-            config.write('LINK_EXTRA_FLAGS=-Wl,--whole-archive -lpthread -Wl,--no-whole-archive %s\n' % LDFLAGS)
+            config.write('LINK_EXTRA_FLAGS=-Wl,--whole-archive -lrt -lpthread -Wl,--no-whole-archive %s\n' % LDFLAGS)
         else:
             config.write('LINK_EXTRA_FLAGS=-lpthread %s\n' % LDFLAGS)
         config.write('SO_EXT=%s\n' % SO_EXT)
@@ -2655,7 +2711,7 @@ def mk_config():
             print("Python pkg dir: %s" % PYTHON_PACKAGE_DIR)
             if GPROF:
                 print('gprof:          enabled')
-            print('Python version: %s' % distutils.sysconfig.get_python_version())
+            print('Python version: %s' % sysconfig.get_python_version())
             if is_java_enabled():
                 print('JNI Bindings:   %s' % JNI_HOME)
                 print('Java Compiler:  %s' % JAVAC)
@@ -2794,6 +2850,9 @@ def update_version():
     minor = VER_MINOR
     build = VER_BUILD
     revision = VER_TWEAK
+
+    print("UpdateVersion:", get_full_version_string(major, minor, build, revision))
+    
     if major is None or minor is None or build is None or revision is None:
         raise MKException("set_version(major, minor, build, revision) must be used before invoking update_version()")
     if not ONLY_MAKEFILES:
@@ -2980,25 +3039,25 @@ def mk_bindings(api_files):
         if is_dotnet_core_enabled():
           dotnet_output_dir = os.path.join(BUILD_DIR, 'dotnet')
           mk_dir(dotnet_output_dir)
+        java_input_dir = None
         java_output_dir = None
         java_package_name = None
         if is_java_enabled():
           java_output_dir = get_component('java').src_dir
+          java_input_dir = get_component('java').src_dir
           java_package_name = get_component('java').package_name
         ml_output_dir = None
         if is_ml_enabled():
           ml_output_dir = get_component('ml').src_dir
-        if is_js_enabled():
-          set_z3js_dir("api/js")
-          js_output_dir = get_component('js').src_dir
         # Get the update_api module to do the work for us
+        update_api.VERBOSE = is_verbose()
         update_api.generate_files(api_files=new_api_files,
           api_output_dir=get_component('api').src_dir,
           z3py_output_dir=get_z3py_dir(),
           dotnet_output_dir=dotnet_output_dir,
-          java_output_dir=java_output_dir,
+          java_input_dir=java_input_dir,
+          java_output_dir=java_output_dir,                                  
           java_package_name=java_package_name,
-          js_output_dir=get_z3js_dir(),
           ml_output_dir=ml_output_dir,
           ml_src_dir=ml_output_dir
         )
@@ -3080,7 +3139,7 @@ def get_platform_toolset_str():
     if len(tokens) < 2:
         return default
     else:
-        if tokens[0] == "15": 
+        if tokens[0] == "15":
             # Visual Studio 2017 reports 15.* but the PlatformToolsetVersion is 141
             return "v141"
         else:

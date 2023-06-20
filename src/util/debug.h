@@ -16,24 +16,12 @@ Author:
 Revision History:
 
 --*/
-#ifndef DEBUG_H_
-#define DEBUG_H_
+#pragma once
 
 #include <stdlib.h>
 
 void enable_assertions(bool f);
 bool assertions_enabled();
-
-#if 0
-#define _CRTDBG_MAP_ALLOC
-#include<stdlib.h>
-#include<new>
-#include<crtdbg.h>
-#endif
-
-#ifndef __has_builtin
-# define __has_builtin(x) 0
-#endif
 
 #include "util/error_codes.h"
 #include "util/warning.h"
@@ -75,37 +63,41 @@ bool is_debug_enabled(const char * tag);
 #define CASSERT(TAG, COND) DEBUG_CODE(if (assertions_enabled() && is_debug_enabled(TAG) && !(COND)) { notify_assertion_violation(__FILE__, __LINE__, #COND); INVOKE_DEBUGGER(); })
 #define XASSERT(COND, EXTRA_CODE) DEBUG_CODE(if (assertions_enabled() && !(COND)) { notify_assertion_violation(__FILE__, __LINE__, #COND); { EXTRA_CODE } INVOKE_DEBUGGER(); })
 
+#define SASSERT_EQ(LHS, RHS)                                                     \
+    DEBUG_CODE(if (assertions_enabled() && !((LHS) == (RHS))) {                  \
+        notify_assertion_violation(__FILE__, __LINE__, #LHS " == " #RHS);        \
+        std::cerr << "LHS value: " << (LHS) << "\nRHS value: " << (RHS) << "\n"; \
+        INVOKE_DEBUGGER();                                                       \
+    })
+
 #ifdef Z3DEBUG
-# define UNREACHABLE() DEBUG_CODE(notify_assertion_violation(__FILE__, __LINE__, "UNREACHABLE CODE WAS REACHED."); INVOKE_DEBUGGER();)
+# define UNREACHABLE() DEBUG_CODE(notify_assertion_violation(__FILE__, __LINE__, "UNEXPECTED CODE WAS REACHED."); INVOKE_DEBUGGER();)
 #else
-#if (defined(__GNUC__) && ((__GNUC__ * 100 + __GNUC_MINOR__) >= 405)) || __has_builtin(__builtin_unreachable)
-// only available in gcc >= 4.5 and in newer versions of clang
-# define UNREACHABLE() __builtin_unreachable()
-#elif defined(_MSC_VER)
-# define UNREACHABLE() __assume(0)
-#else
-#define UNREACHABLE() DEBUG_CODE(notify_assertion_violation(__FILE__, __LINE__, "UNREACHABLE CODE WAS REACHED."); INVOKE_DEBUGGER();)
-#endif
+# define UNREACHABLE() { notify_assertion_violation(__FILE__, __LINE__, "UNEXPECTED CODE WAS REACHED."); exit(ERR_UNREACHABLE); } ((void) 0)
 #endif
 
-#define NOT_IMPLEMENTED_YET() { std::cerr << "NOT IMPLEMENTED YET!\n"; UNREACHABLE(); exit(ERR_NOT_IMPLEMENTED_YET); } ((void) 0)
+#ifdef Z3DEBUG
+# define NOT_IMPLEMENTED_YET() DEBUG_CODE(notify_assertion_violation(__FILE__, __LINE__, "NOT IMPLEMENTED YET!"); INVOKE_DEBUGGER();)
+#else
+# define NOT_IMPLEMENTED_YET() { notify_assertion_violation(__FILE__, __LINE__, "NOT IMPLEMENTED YET!"); exit(ERR_NOT_IMPLEMENTED_YET); } ((void) 0)
+#endif
 
-#define VERIFY(_x_) if (!(_x_)) {                               \
-        std::cerr << "Failed to verify: " << #_x_ << "\n";      \
-        UNREACHABLE();                                          \
-    }                                                           
-
-#define ENSURE(_x_)                                         \
-    if (!(_x_)) {                                           \
-        std::cerr << "Failed to verify: " << #_x_ << "\n";  \
-        exit(-1);                                           \
+#define VERIFY(_x_) if (!(_x_)) {                                                       \
+        notify_assertion_violation(__FILE__, __LINE__, "Failed to verify: " #_x_ "\n"); \
+        exit(ERR_UNREACHABLE);                                                          \
     }
+
+#define VERIFY_EQ(LHS, RHS)                                                                         \
+    if (!((LHS) == (RHS))) {                                                                        \
+        notify_assertion_violation(__FILE__, __LINE__, "Failed to verify: " #LHS " == " #RHS "\n"); \
+        std::cerr << "LHS value: " << (LHS) << "\nRHS value: " << (RHS) << "\n";                    \
+        exit(ERR_UNREACHABLE);                                                                      \
+    }
+
+#define ENSURE(_x_) VERIFY(_x_)
 
 
 void finalize_debug();
 /*
   ADD_FINALIZER('finalize_debug();')
 */
-
-#endif /* DEBUG_H_ */
-

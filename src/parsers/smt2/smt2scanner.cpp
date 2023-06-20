@@ -24,10 +24,11 @@ namespace smt2 {
     void scanner::next() {
         if (m_cache_input)
             m_cache.push_back(m_curr);
-        SASSERT(!m_at_eof);
+        if (m_at_eof)
+            throw scanner_exception("unexpected end of file");
         if (m_interactive) {
-            m_curr = m_stream.get();
-            if (m_stream.eof())
+            m_curr = m_stream->get();
+            if (m_stream->eof())
                 m_at_eof = true;
         }
         else if (m_bpos < m_bend) {
@@ -35,8 +36,8 @@ namespace smt2 {
             m_bpos++;
         }
         else {
-            m_stream.read(m_buffer, SCANNER_BUFFER_SIZE);
-            m_bend = static_cast<unsigned>(m_stream.gcount());
+            m_stream->read(m_buffer, SCANNER_BUFFER_SIZE);
+            m_bend = static_cast<unsigned>(m_stream->gcount());
             m_bpos = 0;
             if (m_bpos == m_bend) {
                 m_at_eof = true;
@@ -270,6 +271,7 @@ namespace smt2 {
     }
 
     scanner::scanner(cmd_context & ctx, std::istream& stream, bool interactive) :
+        ctx(ctx),
         m_interactive(interactive),
         m_spos(0),
         m_curr(0), // avoid Valgrind warning
@@ -279,10 +281,9 @@ namespace smt2 {
         m_bv_size(UINT_MAX),
         m_bpos(0),
         m_bend(0),
-        m_stream(stream),
+        m_stream(&stream),
         m_cache_input(false) {
 
-        m_smtlib2_compliant = ctx.params().m_smtlib2_compliant;
 
         for (int i = 0; i < 256; ++i) {
             m_normalized[i] = (signed char) i;
@@ -365,7 +366,7 @@ namespace smt2 {
                 if (t == NULL_TOKEN) break;
                 return t;
             case '-':
-                if (m_smtlib2_compliant)
+                if (ctx.params().m_smtlib2_compliant)
                     return read_symbol();
                 else
                     return read_signed_number();
@@ -379,7 +380,7 @@ namespace smt2 {
 
     char const * scanner::cached_str(unsigned begin, unsigned end) {
         m_cache_result.reset();
-        while (isspace(m_cache[begin]) && begin < end)
+        while (begin < end && isspace(m_cache[begin]))
             begin++;
         while (begin < end && isspace(m_cache[end-1]))
             end--;
@@ -389,5 +390,13 @@ namespace smt2 {
         return m_cache_result.begin();
     }
 
+    void scanner::reset_input(std::istream & stream, bool interactive) {
+        m_stream = &stream;
+        m_interactive = interactive;
+        m_at_eof = false;
+        m_bpos = 0;
+        m_bend = 0;
+        next();
+    }
 };
 

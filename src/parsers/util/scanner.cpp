@@ -17,6 +17,7 @@ Revision History:
 
 --*/
 #include "parsers/util/scanner.h"
+#include <iostream>
 
 inline int scanner::read_char() {
     if (m_is_interactive) {
@@ -26,7 +27,7 @@ inline int scanner::read_char() {
 
     if (m_bpos >= m_bend) {
         m_buffer[0] = m_last_char;
-        m_stream.read(m_buffer.c_ptr()+1, m_buffer.size()-1);
+        m_stream.read(m_buffer.data()+1, m_buffer.size()-1);
         m_bend = 1 + static_cast<unsigned>(m_stream.gcount());
         m_bpos = 1;
         m_last_char = m_buffer[m_bend-1];
@@ -178,7 +179,7 @@ bool scanner::read_params() {
                 ch = read_char();
                 if (ch == ':' || ch == ']') {
                     m_string.push_back(0);
-                    m_params.push_back(parameter(symbol(m_string.c_ptr())));
+                    m_params.push_back(parameter(symbol(m_string.data())));
                     param_num = 0;
                     if (ch == ':') {
                         unread_char();
@@ -480,7 +481,7 @@ scanner::token scanner::scan() {
             return read_number(ch, true);
         case '#':
             return read_bv_literal();
-        case -1:
+        case static_cast<char>(-1):
             m_state = EOF_TOKEN;
             break;
         default:

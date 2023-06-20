@@ -16,7 +16,6 @@ Revision History:
 
 --*/
 #include<cmath>
-#include<iostream>
 #include "api/z3.h"
 #include "api/api_log_macros.h"
 #include "api/api_context.h"
@@ -82,7 +81,7 @@ extern "C" {
             // avoid expanding floats into huge rationals.
             fpa_util & fu = mk_c(c)->fpautil();
             scoped_mpf t(fu.fm());
-            fu.fm().set(t, fu.get_ebits(_ty), fu.get_sbits(_ty), MPF_ROUND_TOWARD_ZERO, n);
+            fu.fm().set(t, fu.get_ebits(_ty), fu.get_sbits(_ty), MPF_ROUND_NEAREST_TEVEN, n);
             a = fu.mk_value(t);
             mk_c(c)->save_ast_trail(a);
         }
@@ -179,6 +178,27 @@ extern "C" {
         Z3_CATCH_RETURN(false);
     }
 
+
+    Z3_string Z3_API Z3_get_numeral_binary_string(Z3_context c, Z3_ast a) {
+        Z3_TRY;
+        // This function invokes Z3_get_numeral_rational, but it is still ok to add LOG command here because it does not return a Z3 object.
+        LOG_Z3_get_numeral_binary_string(c, a);
+        RESET_ERROR_CODE();
+        CHECK_IS_EXPR(a, "");
+        rational r;
+        bool ok = Z3_get_numeral_rational(c, a, r);
+        if (ok && r.is_int() && !r.is_neg()) {
+            std::stringstream strm;
+            r.display_bin(strm, r.get_num_bits());
+            return mk_c(c)->mk_external_string(strm.str());
+        }
+        else {
+            SET_ERROR_CODE(Z3_INVALID_ARG, nullptr);
+            return "";
+        }
+        Z3_CATCH_RETURN("");
+
+    }
 
     Z3_string Z3_API Z3_get_numeral_string(Z3_context c, Z3_ast a) {
         Z3_TRY;
@@ -438,5 +458,34 @@ extern "C" {
         RETURN_Z3(of_ast(a));
         Z3_CATCH_RETURN(nullptr);
     }
+
+#if 0
+    Z3_ast Z3_API Z3_mk_mpz_numeral(Z3_context c, bool sign, unsigned n, unsigned const nums[], Z3_sort* srt) {
+        LOG_TRY;
+        LOG_Z3_mk_mpz_numeral(c, sign, n, nums, srt);
+        RESET_ERROR_CODE();
+        rational z;
+
+        // todo fill in z
+        if (!z.size())
+            z.neg();
+        arith_util & a = mk_c(c)->autil();
+        auto* a = mk_c(c)->mk_numeral_core(r, a.mk_int_sort());
+        Z3_CATCH_RETURN(nullptr);
+            
+    }
+
+    Z3_ast Z3_API Z3_mk_mpq_numeral1(Z3_context c, bool sign, unsigned n, unsigned const nums[], unsigned d, unsigned const dens[]) {
+        LOG_TRY;
+        LOG_Z3_mk_mpq_numeral(c, sign, n, nums, d, dens);
+        RESET_ERROR_CODE();
+        rational q;
+
+        if (!sign)
+            q.neg();
+
+        Z3_CATCH_RETURN(nullptr);
+    }
+#endif
 
 };

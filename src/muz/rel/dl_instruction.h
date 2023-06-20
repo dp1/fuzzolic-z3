@@ -16,10 +16,9 @@ Author:
 Revision History:
 
 --*/
-#ifndef DL_INSTRUCTION_H_
-#define DL_INSTRUCTION_H_
+#pragma once
 
-#include<iostream>
+#include<ostream>
 #include<string>
 #include<utility>
 #include "ast/ast.h"
@@ -318,7 +317,7 @@ namespace datalog {
     class instruction_block {
     public:
         struct instruction_observer {
-            virtual ~instruction_observer() {}
+            virtual ~instruction_observer() = default;
             virtual void notify(instruction * i) {}
         };
     private:
@@ -367,5 +366,4 @@ namespace datalog {
 
 };
 
-#endif /* DL_INSTRUCTION_H_ */
 

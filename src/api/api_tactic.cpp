@@ -15,7 +15,6 @@ Author:
 Revision History:
 
 --*/
-#include<iostream>
 #include "api/z3.h"
 #include "api/api_log_macros.h"
 #include "api/api_context.h"
@@ -54,7 +53,7 @@ extern "C" {
         if (t == nullptr) {
             std::stringstream err;
             err << "unknown tactic " << name;
-            SET_ERROR_CODE(Z3_INVALID_ARG, err.str().c_str());
+            SET_ERROR_CODE(Z3_INVALID_ARG, err.str());
             RETURN_Z3(nullptr);
         }
         tactic * new_t = t->mk(mk_c(c)->m());
@@ -73,8 +72,8 @@ extern "C" {
     void Z3_API Z3_tactic_dec_ref(Z3_context c, Z3_tactic t) {
         Z3_TRY;
         LOG_Z3_tactic_dec_ref(c, t);
-        RESET_ERROR_CODE();
-        to_tactic(t)->dec_ref();
+        if (t)
+            to_tactic(t)->dec_ref();
         Z3_CATCH;
     }
 
@@ -103,8 +102,8 @@ extern "C" {
     void Z3_API Z3_probe_dec_ref(Z3_context c, Z3_probe p) {
         Z3_TRY;
         LOG_Z3_probe_dec_ref(c, p);
-        RESET_ERROR_CODE();
-        to_probe(p)->dec_ref();
+        if (p)
+            to_probe(p)->dec_ref();
         Z3_CATCH;
     }
 
@@ -134,7 +133,7 @@ extern "C" {
         for (unsigned i = 0; i < num; i++) {
             _ts.push_back(to_tactic_ref(ts[i]));
         }
-        tactic * new_t = par(num, _ts.c_ptr());
+        tactic * new_t = par(num, _ts.data());
         RETURN_TACTIC(new_t);
         Z3_CATCH_RETURN(nullptr);
     }
@@ -226,8 +225,9 @@ extern "C" {
         RESET_ERROR_CODE();
         param_descrs r;
         to_tactic_ref(t)->collect_param_descrs(r);
-        to_param_ref(p).validate(r);
-        tactic * new_t = using_params(to_tactic_ref(t), to_param_ref(p));
+        auto &params = to_param_ref(p);
+        params.validate(r);
+        tactic * new_t = using_params(to_tactic_ref(t), params);
         RETURN_TACTIC(new_t);
         Z3_CATCH_RETURN(nullptr);
     }
@@ -328,8 +328,8 @@ extern "C" {
         if (idx >= mk_c(c)->num_tactics()) {
             SET_ERROR_CODE(Z3_IOB, nullptr);
             return "";
-        }
-        return mk_c(c)->get_tactic(idx)->get_name().bare_str();
+        }        
+        return mk_c(c)->mk_external_string(mk_c(c)->get_tactic(idx)->get_name().str().c_str());
         Z3_CATCH_RETURN("");
     }
 
@@ -349,7 +349,7 @@ extern "C" {
             SET_ERROR_CODE(Z3_IOB, nullptr);
             return "";
         }
-        return mk_c(c)->get_probe(idx)->get_name().bare_str();
+        return mk_c(c)->mk_external_string(mk_c(c)->get_probe(idx)->get_name().str().c_str());
         Z3_CATCH_RETURN("");
     }
 
@@ -456,8 +456,9 @@ extern "C" {
         RESET_ERROR_CODE();
         param_descrs pd;
         to_tactic_ref(t)->collect_param_descrs(pd);
-        to_param_ref(p).validate(pd);
-        Z3_apply_result r = _tactic_apply(c, t, g, to_param_ref(p));
+        auto &params = to_param_ref(p);
+        params.validate(pd);
+        Z3_apply_result r = _tactic_apply(c, t, g, params);
         RETURN_Z3(r);
         Z3_CATCH_RETURN(nullptr);
     }
@@ -473,8 +474,8 @@ extern "C" {
     void Z3_API Z3_apply_result_dec_ref(Z3_context c, Z3_apply_result r) {
         Z3_TRY;
         LOG_Z3_apply_result_dec_ref(c, r);
-        RESET_ERROR_CODE();
-        to_apply_result(r)->dec_ref();
+        if (r)
+            to_apply_result(r)->dec_ref();
         Z3_CATCH;
     }
     

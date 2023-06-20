@@ -19,18 +19,17 @@ Author:
 Notes:
 
 --*/
-#ifndef Z3_RCF_H_
-#define Z3_RCF_H_
+#pragma once
 
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
 
     /** \defgroup capi C API */
-    /*@{*/
+    /**@{*/
 
     /** @name Real Closed Fields */
-    /*@{*/
+    /**@{*/
     /**
        \brief Delete a RCF numeral created using the RCF API.
 
@@ -197,11 +196,10 @@ extern "C" {
     */
     void Z3_API Z3_rcf_get_numerator_denominator(Z3_context c, Z3_rcf_num a, Z3_rcf_num * n, Z3_rcf_num * d);
 
-    /*@}*/
-    /*@}*/
+    /**@}*/
+    /**@}*/
 
 #ifdef __cplusplus
 }
 #endif // __cplusplus
 
-#endif

@@ -33,6 +33,7 @@ Notes:
 #include "util/scoped_numeral_buffer.h"
 #include "util/ref_buffer.h"
 #include "util/common_msgs.h"
+#include <memory>
 
 namespace polynomial {
 
@@ -528,7 +529,7 @@ namespace polynomial {
             SASSERT(new_capacity > m_capacity);
             monomial * new_ptr  = allocate(new_capacity);
             new_ptr->m_size = m_ptr->m_size;
-            memcpy(new_ptr->m_powers, m_ptr->m_powers, sizeof(power)*m_ptr->m_size);
+            std::uninitialized_copy(m_ptr->m_powers, m_ptr->m_powers + m_ptr->m_size, new_ptr->m_powers);
             deallocate(m_ptr, m_capacity);
             m_ptr      = new_ptr;
             m_capacity = new_capacity;
@@ -548,8 +549,7 @@ namespace polynomial {
                 increase_capacity(sz * 2);
             SASSERT(sz < m_capacity);
             m_ptr->m_size = sz;
-            if (sz == 0) return;
-            memcpy(m_ptr->m_powers, pws, sizeof(power) * sz);
+            std::uninitialized_copy(pws, pws + sz, m_ptr->m_powers);
         }
 
         void reset() {
@@ -794,11 +794,15 @@ namespace polynomial {
         ~monomial_manager() {
             dec_ref(m_unit);
             CTRACE("polynomial", !m_monomials.empty(),
-                   tout << "monomials leaked\n";
+                   tout << "monomials leaked (can happen during cancelation)\n";
                    for (auto * m : m_monomials) {
                        m->display(tout << m->id() << " " << m->ref_count() << " ") << "\n";
                    });
-            SASSERT(m_monomials.empty());
+            for (monomial* m : m_monomials) {
+                unsigned obj_sz = monomial::get_obj_size(m->size());
+                m_allocator->deallocate(obj_sz, m);                
+            }
+            m_monomials.reset();
             if (m_own_allocator)
                 dealloc(m_allocator);
         }
@@ -913,7 +917,7 @@ namespace polynomial {
                 else
                     m_powers_tmp.push_back(power(x, 1));
             }
-            return mk_monomial(m_powers_tmp.size(), m_powers_tmp.c_ptr());
+            return mk_monomial(m_powers_tmp.size(), m_powers_tmp.data());
         }
 
         monomial * mul(unsigned sz1, power const * pws1, unsigned sz2, power const * pws2) {
@@ -1272,7 +1276,7 @@ namespace polynomial {
             SASSERT(sz == num_vars());
             DEBUG_CODE({
                 // check whether xs is really a permutation
-                svector<bool> found;
+                bool_vector found;
                 found.resize(num_vars(), false);
                 for (unsigned i = 0; i < sz; i++) {
                     SASSERT(xs[i] < num_vars());
@@ -1331,8 +1335,8 @@ namespace polynomial {
                 buckets[i].reset();
             }
             SASSERT(p.size() == end - start);
-            apply_permutation(p.size(), m_as + start, p.c_ptr());
-            apply_permutation_core(p.size(), m_ms + start, p.c_ptr()); // p is not needed anymore after this command
+            apply_permutation(p.size(), m_as + start, p.data());
+            apply_permutation_core(p.size(), m_ms + start, p.data()); // p is not needed anymore after this command
             i = start;
             while (i < end) {
                 monomial * m = m_ms[i];
@@ -1874,7 +1878,7 @@ namespace polynomial {
              if (sz == 0)
                  return false;
              scoped_numeral g(m);
-             m.gcd(as.size(), as.c_ptr(), g);
+             m.gcd(as.size(), as.data(), g);
              if (m.is_one(g))
                  return false;
              SASSERT(m.is_pos(g));
@@ -2148,7 +2152,7 @@ namespace polynomial {
 
             polynomial * mk(bool normalize = false) {
                 remove_zeros(normalize);
-                polynomial * p = m_owner->mk_polynomial_core(m_tmp_as.size(), m_tmp_as.c_ptr(), m_tmp_ms.c_ptr());
+                polynomial * p = m_owner->mk_polynomial_core(m_tmp_as.size(), m_tmp_as.data(), m_tmp_ms.data());
                 m_tmp_as.reset();
                 m_tmp_ms.reset();
                 return p;
@@ -2308,7 +2312,7 @@ namespace polynomial {
             }
 
             polynomial * mk() {
-                polynomial * new_p = m_owner->mk_polynomial_core(m_tmp_as.size(), m_tmp_as.c_ptr(), m_tmp_ms.c_ptr());
+                polynomial * new_p = m_owner->mk_polynomial_core(m_tmp_as.size(), m_tmp_as.data(), m_tmp_ms.data());
                 m_tmp_as.reset();
                 m_tmp_ms.reset();
                 return new_p;
@@ -2610,7 +2614,7 @@ namespace polynomial {
 
         polynomial * mk_polynomial(unsigned sz, rational const * as, monomial * const * ms) {
             rational2numeral(sz, as);
-            polynomial * p = mk_polynomial(sz, m_rat2numeral.c_ptr(), ms);
+            polynomial * p = mk_polynomial(sz, m_rat2numeral.data(), ms);
             reset_tmp_as2();
             return p;
         }
@@ -2632,7 +2636,7 @@ namespace polynomial {
         polynomial * mk_univariate(var x, unsigned n, rational const * as) {
             SASSERT(is_valid(x));
             rational2numeral(n+1, as);
-            polynomial * p = mk_univariate(x, n, m_rat2numeral.c_ptr());
+            polynomial * p = mk_univariate(x, n, m_rat2numeral.data());
             reset_tmp_as2();
             return p;
         }
@@ -2652,7 +2656,10 @@ namespace polynomial {
                 swap(m_tmp_linear_as.back(), c);
                 m_tmp_linear_ms.push_back(mk_unit());
             }
-            polynomial * p = mk_polynomial(m_tmp_linear_as.size(), m_tmp_linear_as.c_ptr(), m_tmp_linear_ms.c_ptr());
+            polynomial * p = mk_polynomial(m_tmp_linear_as.size(), m_tmp_linear_as.data(), m_tmp_linear_ms.data());
+            for (auto& a : m_tmp_linear_as) {
+                m_manager.del(a);
+            }
             m_tmp_linear_as.reset();
             m_tmp_linear_ms.reset();
             return p;
@@ -2663,7 +2670,7 @@ namespace polynomial {
             rational2numeral(sz, as);
             numeral tmp_c;
             m_manager.set(tmp_c, c.to_mpq().numerator());
-            polynomial * p = mk_linear(sz, m_rat2numeral.c_ptr(), xs, tmp_c);
+            polynomial * p = mk_linear(sz, m_rat2numeral.data(), xs, tmp_c);
             SASSERT(m_manager.is_zero(tmp_c));
             reset_tmp_as2();
             return p;
@@ -3195,7 +3202,7 @@ namespace polynomial {
                                   tout << m.to_string(cs[i]) << " ";
                               }
                               tout << "\n";);
-                        solver.add(i, cs.c_ptr(), m_outputs[output_idx]);
+                        solver.add(i, cs.data(), m_outputs[output_idx]);
                     }
                     TRACE("sparse_interpolator",
                           tout << "find coefficients of:\n";
@@ -3204,7 +3211,7 @@ namespace polynomial {
                           }
                           tout << "system of equations:\n";
                           solver.display(tout););
-                    if (!solver.solve(new_as.c_ptr()))
+                    if (!solver.solve(new_as.data()))
                         return false;
                     for (unsigned i = 0; i < num_pws; i++) {
                         if (!m.is_zero(new_as[i])) {
@@ -3213,12 +3220,12 @@ namespace polynomial {
                         }
                     }
                 }
-                r = m_skeleton->pm.mk_polynomial(as.size(), as.c_ptr(), mons.c_ptr());
+                r = m_skeleton->pm.mk_polynomial(as.size(), as.data(), mons.data());
                 return true;
             }
         };
 
-        svector<bool>  m_found_vars;
+        bool_vector  m_found_vars;
         void vars(polynomial const * p, var_vector & xs) {
             xs.reset();
             m_found_vars.reserve(num_vars(), false);
@@ -4089,7 +4096,7 @@ namespace polynomial {
         // select a new random value in GF(p) that is not in vals, and store it in r
         void peek_fresh(scoped_numeral_vector const & vals, unsigned p, scoped_numeral & r) {
             SASSERT(vals.size() < p); // otherwise we can't keep the fresh value
-            unsigned sz = vals.size();
+            auto sz = vals.size();
             while (true) {
                 m().set(r, rand() % p);
                 // check if fresh value...
@@ -4730,7 +4737,7 @@ namespace polynomial {
                     push_power(pws, y, n - k);
                     push_power(pws, x, k);
                 }
-                monomial * new_m = mk_monomial(pws.size(), pws.c_ptr());
+                monomial * new_m = mk_monomial(pws.size(), pws.data());
                 m_cheap_som_buffer.add(p->a(i), new_m);
             }
             return m_cheap_som_buffer.mk();
@@ -5661,7 +5668,7 @@ namespace polynomial {
                         h1 = exact_div(h1, hs0);
                         S.push_back(h1);
                         if (is_zero(G2)) {
-                            std::reverse(S.c_ptr(), S.c_ptr() + S.size());
+                            std::reverse(S.data(), S.data() + S.size());
                             return;
                         }
                     }
@@ -5848,7 +5855,7 @@ namespace polynomial {
                 psc_chain_optimized_core(Q, P, x, S);
             if (S.empty())
                 S.push_back(mk_zero());
-            std::reverse(S.c_ptr(), S.c_ptr() + S.size());
+            std::reverse(S.data(), S.data() + S.size());
         }
 
         void psc_chain_classic_core(polynomial const * P, polynomial const * Q, var x, polynomial_ref_vector & S) {
@@ -5928,7 +5935,7 @@ namespace polynomial {
                 psc_chain_classic_core(Q, P, x, S);
             if (S.empty())
                 S.push_back(mk_zero());
-            std::reverse(S.c_ptr(), S.c_ptr() + S.size());
+            std::reverse(S.data(), S.data() + S.size());
         }
 
         void psc_chain(polynomial const * A, polynomial const * B, var x, polynomial_ref_vector & S) {
@@ -6043,6 +6050,9 @@ namespace polynomial {
             SASSERT(m1 != 0);
             som_buffer & R = m_som_buffer;
             som_buffer & C = m_som_buffer2;
+            struct scoped_reset { som_buffer& b; scoped_reset(som_buffer& b) :b(b) {} ~scoped_reset() { b.reset(); } };
+            scoped_reset _rs1(R);
+            scoped_reset _rs2(C);
             R.reset();
             C.reset();
             numeral two;
@@ -6067,21 +6077,19 @@ namespace polynomial {
                 unsigned curr_max = C.graded_lex_max_pos();
                 if (curr_max == UINT_MAX) {
                     // C is empty
-                    C.reset();
                     r = R.mk();
                     return true;
                 }
                 monomial * m = C.m(curr_max);
                 monomial_ref m_i(pm());
-                if (!div(m, m1, m_i)) {
-                    // m1 does not divide maximal monomial of C.
-                    R.reset();
-                    C.reset();
+                // m1 does not divide maximal monomial of C.
+                if (!div(m, m1, m_i))                     
                     return false;
-                }
+                
                 // 2*a does not divide maximal coefficient of C
-                if (!m_manager.divides(two_a, C.a(curr_max)))
+                if (!m_manager.divides(two_a, C.a(curr_max))) 
                     return false;
+                
                 m_manager.div(C.a(curr_max), two_a, a_i);
 
                 // C  <- C - 2*R*a_i*m_i - a_i*a_i*m_i*m_i
@@ -6116,14 +6124,10 @@ namespace polynomial {
             mm().rename(sz, xs);
             // we must traverse the polynomial vector, and update the first monomial,
             // since it may not contain anymore the maximal variable with maximal degree.
-            polynomial_vector::iterator it2  = m_polynomials.begin();
-            polynomial_vector::iterator end2 = m_polynomials.end();
-            for (; it2 != end2; ++it2) {
-                polynomial * p = *it2;
-                if (p == nullptr)
-                    continue;
-                p->make_first_maximal();
-                SASSERT(p->size() <= 1 || !p->lex_sorted());
+            for (polynomial* p : m_polynomials) {
+                if (p != nullptr)
+                    p->make_first_maximal();
+                SASSERT(!p || p->size() <= 1 || !p->lex_sorted());
             }
             TRACE("rename",
                   tout << "polynomials after rename\n";
@@ -6236,7 +6240,7 @@ namespace polynomial {
             }
 
             void reset() {
-                unsigned sz = m_xs.size();
+                auto sz = m_xs.size();
                 for (unsigned i = 0; i < sz; i++) {
                     m_max_degree[m_xs[i]] = 0;
                 }
@@ -6249,7 +6253,7 @@ namespace polynomial {
 
             unsigned num_vars() const { return m_xs.size(); }
 
-            var const * vars() const { return m_xs.c_ptr(); }
+            var const * vars() const { return m_xs.data(); }
         };
 
         struct scoped_var_max_degree {
@@ -6748,7 +6752,7 @@ namespace polynomial {
                 for (unsigned i = 0; i < num_factors; i++) {
                     numeral_vector const & f1 = fs[i];
                     unsigned k1 = fs.get_degree(i);
-                    f = to_polynomial(f1.size(), f1.c_ptr(), x);
+                    f = to_polynomial(f1.size(), f1.data(), x);
                     TRACE("factor_bug",
                           tout << "uni-factor:\n"; upm().display(tout, f1); tout << "\n";
                           tout << "factor:\n" << f << "\n";);
@@ -6874,7 +6878,7 @@ namespace polynomial {
                 coeffs.push_back(numeral());
                 m_manager.set(coeffs.back(), p[i]);
             }
-            return mk_univariate(x, sz-1, coeffs.c_ptr());
+            return mk_univariate(x, sz-1, coeffs.data());
         }
 
         polynomial * mk_glex_monic(polynomial const * p) {
@@ -7506,7 +7510,7 @@ polynomial::polynomial * convert(polynomial::manager & sm, polynomial::polynomia
             }
         }
     }
-    return tm.mk_polynomial(as.size(), as.c_ptr(), ms.c_ptr());
+    return tm.mk_polynomial(as.size(), as.data(), ms.data());
 }
 
 std::ostream & operator<<(std::ostream & out, polynomial_ref_vector const & seq) {

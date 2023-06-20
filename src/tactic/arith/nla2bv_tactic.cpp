@@ -27,8 +27,8 @@ Notes:
 #include "util/optional.h"
 #include "tactic/arith/bv2int_rewriter.h"
 #include "tactic/arith/bv2real_rewriter.h"
-#include "tactic/generic_model_converter.h"
-#include "tactic/arith/bound_manager.h"
+#include "ast/converters/generic_model_converter.h"
+#include "ast/simplifiers/bound_manager.h"
 #include "util/obj_pair_hashtable.h"
 #include "ast/ast_smt2_pp.h"
 
@@ -81,9 +81,7 @@ class nla2bv_tactic : public tactic {
 
         ~imp() {}
 
-		void updt_params(params_ref const& p)  {
-		}
-        
+        void updt_params(params_ref const& p)  {} 
         
         void operator()(goal & g, model_converter_ref & mc) {
             TRACE("nla2bv", g.display(tout);
@@ -91,7 +89,8 @@ class nla2bv_tactic : public tactic {
                   );
             tactic_report report("nla->bv", g);
             m_fmc = alloc(generic_model_converter, m_manager, "nla2bv");
-            m_bounds(g);
+            for (unsigned i = 0; i < g.size(); ++i)
+                m_bounds(g.form(i), g.dep(i), g.pr(i));
             collect_power2(g);
             switch (collect_vars(g)) {
             case has_num: 
@@ -102,20 +101,19 @@ class nla2bv_tactic : public tactic {
                 return;
             }
             substitute_vars(g);
-            TRACE("nla2bv", g.display(tout << "substitute vars\n"););
+            TRACE("nla2bv", g.display(tout << "substitute vars\n"));
             reduce_bv2int(g);
             reduce_bv2real(g);
-            TRACE("nla2bv", g.display(tout << "after reduce\n"););
+            TRACE("nla2bv", g.display(tout << "after reduce\n"));
             mc = m_fmc.get();
-            for (unsigned i = 0; i < m_vars.size(); ++i) {
-                m_fmc->add(m_vars[i].get(), m_defs[i].get());
-            }
+            for (unsigned i = 0; i < m_vars.size(); ++i) 
+                m_fmc->add(m_vars.get(i), m_defs.get(i));
             for (unsigned i = 0; i < m_bv2real.num_aux_decls(); ++i) {
                 m_fmc->hide(m_bv2real.get_aux_decl(i));
             }        
             IF_VERBOSE(TACTIC_VERBOSITY_LVL, verbose_stream() << "(nla->bv :sat-preserving " << m_is_sat_preserving << ")\n";);
-            TRACE("nla2bv_verbose", g.display(tout););
-            TRACE("nla2bv", tout << "Muls: " << count_mul(g) << "\n";);
+            TRACE("nla2bv_verbose", g.display(tout));
+            TRACE("nla2bv", tout << "Muls: " << count_mul(g) << "\n");
             g.inc_depth();
             if (!is_sat_preserving())
                 g.updt_prec(goal::UNDER);
@@ -132,14 +130,13 @@ class nla2bv_tactic : public tactic {
             m_bv2int_ctx.collect_power2(g);
             obj_map<expr, expr*> const& p2 = m_bv2int_ctx.power2();
             if (p2.empty()) return;
-            obj_map<expr, expr*>::iterator it = p2.begin(), end = p2.end();
-            for (; it != end; ++it) {
-                expr* v = it->m_value;
+            for (auto const& kv : p2) {
+                expr* v = kv.m_value;
                 unsigned num_bits = m_bv.get_bv_size(v);
                 expr* w = m_bv.mk_bv2int(m_bv.mk_bv_shl(m_bv.mk_numeral(1, num_bits), v));
                 m_trail.push_back(w);
-                m_subst.insert(it->m_key, w);
-                TRACE("nla2bv", tout << mk_ismt2_pp(it->m_key, m_manager) << " " << mk_ismt2_pp(w, m_manager) << "\n";);
+                m_subst.insert(kv.m_key, w);
+                TRACE("nla2bv", tout << mk_ismt2_pp(kv.m_key, m_manager) << " " << mk_ismt2_pp(w, m_manager) << "\n";);
             }
             // eliminate the variables that are power of two.
             substitute_vars(g);
@@ -187,7 +184,7 @@ class nla2bv_tactic : public tactic {
         
         // substitute variables by bit-vectors
         void substitute_vars(goal & g) {
-            scoped_ptr<expr_replacer> er = mk_default_expr_replacer(m_manager);
+            scoped_ptr<expr_replacer> er = mk_default_expr_replacer(m_manager, false);
             er->set_substitution(&m_subst);
             expr_ref r(m_manager);
             for (unsigned i = 0; i < g.size(); ++i) {
@@ -438,8 +435,7 @@ public:
         return alloc(nla2bv_tactic, m_params);
     }
 
-    ~nla2bv_tactic() override {
-    }
+    char const* name() const override { return "nla2bv"; }
 
     void updt_params(params_ref const & p) override {
 		m_params.append(p);
@@ -447,9 +443,9 @@ public:
 
     void collect_param_descrs(param_descrs & r) override {
         r.insert("nla2bv_max_bv_size", CPK_UINT, "(default: inf) maximum bit-vector size used by nla2bv tactic");
-        r.insert("nla2bv_bv_size", CPK_UINT, "(default: 4) default bit-vector size used by nla2bv tactic.");
-        r.insert("nla2bv_root", CPK_UINT, "(default: 2) nla2bv tactic encodes reals into bit-vectors using expressions of the form a+b*sqrt(c), this parameter sets the value of c used in the encoding.");
-        r.insert("nla2bv_divisor", CPK_UINT, "(default: 2) nla2bv tactic parameter.");
+        r.insert("nla2bv_bv_size", CPK_UINT, "default bit-vector size used by nla2bv tactic.", "4");
+        r.insert("nla2bv_root", CPK_UINT, "nla2bv tactic encodes reals into bit-vectors using expressions of the form a+b*sqrt(c), this parameter sets the value of c used in the encoding.", "2");
+        r.insert("nla2bv_divisor", CPK_UINT, "nla2bv tactic parameter.", "2");
     }
     
     /**
@@ -459,7 +455,6 @@ public:
     */
     void operator()(goal_ref const & g,
                     goal_ref_buffer & result) override {
-        SASSERT(g->is_well_sorted());
         fail_if_proof_generation("nla2bv", g);
         fail_if_unsat_core_generation("nla2bv", g);
         result.reset();
@@ -470,7 +465,6 @@ public:
         proc(*(g.get()), mc);
         g->add(mc.get());
         result.push_back(g.get());
-        SASSERT(g->is_well_sorted());
     }
     
     void cleanup() override {

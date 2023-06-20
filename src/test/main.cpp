@@ -196,6 +196,7 @@ int main(int argc, char ** argv) {
     TST(escaped);
     TST(buffer);
     TST(chashtable);
+    TST(egraph);
     TST(ex);
     TST(nlarith_util);
     TST(api_bug);
@@ -214,9 +215,12 @@ int main(int argc, char ** argv) {
     TST(prime_generator);
     TST(permutation);
     TST(nlsat);
+    TST(zstring);
     if (test_all) return 0;
     TST(ext_numeral);
     TST(interval);
+    TST(value_generator);
+    TST(value_sweep);
     TST(vector);
     TST(f2n);
     TST(hwf);
@@ -253,6 +257,11 @@ int main(int argc, char ** argv) {
     TST_ARGV(sat_local_search);
     TST_ARGV(cnf_backbones);
     TST(bdd);
+    TST(pdd);
+    TST(pdd_solver);
+    TST(scoped_timer);
     TST(solver_pool);
     //TST_ARGV(hs);
+    TST(finder);
+    TST(totalizer);
 }

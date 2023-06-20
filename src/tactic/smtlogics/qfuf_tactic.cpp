@@ -22,7 +22,7 @@ Notes:
 #include "tactic/core/symmetry_reduce_tactic.h"
 #include "tactic/core/solve_eqs_tactic.h"
 #include "tactic/core/propagate_values_tactic.h"
-#include "smt/tactic/smt_tactic.h"
+#include "tactic/smtlogics/smt_tactic.h"
 
 tactic * mk_qfuf_tactic(ast_manager & m, params_ref const & p) {
     params_ref s2_p;

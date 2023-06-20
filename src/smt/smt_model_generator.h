@@ -25,8 +25,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef SMT_MODEL_GENERATOR_H_
-#define SMT_MODEL_GENERATOR_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "smt/smt_types.h"
@@ -137,7 +136,7 @@ namespace smt {
     */
     class model_value_proc {
     public:
-        virtual ~model_value_proc() {}
+        virtual ~model_value_proc() = default;
         /**
            \brief Fill result with the dependencies of this functor.
            That is, to invoke mk_value, the dependencies in result must be constructed.
@@ -241,6 +240,5 @@ namespace smt {
     };
 };
 
-#endif /* SMT_MODEL_GENERATOR_H_ */
 
 

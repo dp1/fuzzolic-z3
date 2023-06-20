@@ -15,9 +15,10 @@ Author:
 
 Revision History:
 
+## Tactic subpaving
+
 --*/
-#ifndef SUBPAVING_TACTIC_H_
-#define SUBPAVING_TACTIC_H_
+#pragma once
 
 #include "util/params.h"
 class ast_manager;
@@ -28,4 +29,3 @@ tactic * mk_subpaving_tactic(ast_manager & m, params_ref const & p = params_ref(
   ADD_TACTIC("subpaving", "tactic for testing subpaving module.", "mk_subpaving_tactic(m, p)")
 */
 
-#endif

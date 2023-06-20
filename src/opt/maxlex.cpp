@@ -19,21 +19,22 @@ Author:
 
 --*/
 
+#include "ast/ast_pp.h"
 #include "opt/opt_context.h"
 #include "opt/maxsmt.h"
 #include "opt/maxlex.h"
 
 namespace opt {
 
-    bool is_maxlex(weights_t & _ws) {
-        vector<rational> ws(_ws);
-        std::sort(ws.begin(), ws.end());
+    bool is_maxlex(vector<soft> const & _ws) {
+        vector<soft> ws(_ws);
+        std::sort(ws.begin(), ws.end(), [&](soft const& s1, soft const& s2) { return s1.weight < s2.weight; });
         ws.reverse();
         rational sum(0);
-        for (rational const& w : ws) {
+        for (auto const& [e, w, t] : ws) {
             sum += w;
         }
-        for (rational const& w : ws) {
+        for (auto const& [e, w, t] : ws) {
             if (sum > w + w) return false;
             sum -= w;
         }
@@ -51,7 +52,7 @@ namespace opt {
         ast_manager&    m;
         maxsat_context& m_c;
         
-        void update_assignment() {
+        bool update_assignment() {
             model_ref mdl;
             s().get_model(mdl);
             if (mdl) {
@@ -59,6 +60,7 @@ namespace opt {
                 m_c.model_updated(mdl.get());
                 update_assignment(mdl);
             }
+            return mdl.get() != nullptr;
         }
 
         void assert_value(soft& soft) {
@@ -75,14 +77,20 @@ namespace opt {
         }
 
         void update_assignment(model_ref & mdl) {
+            mdl->set_model_completion(true);
             bool first_undef = true, second_undef = false;
             for (auto & soft : m_soft) {
                 if (first_undef && soft.value != l_undef) {
                     continue;
                 }
-                first_undef = false;
-                if (soft.value != l_false) {
-                    lbool v = mdl->is_true(soft.s) ? l_true : l_undef;;
+                else if (first_undef) {
+                    SASSERT(soft.value == l_undef);
+                    soft.set_value(l_true);
+                    assert_value(soft);            
+                    first_undef = false;
+                }
+                else if (soft.value != l_false) {
+                    lbool v = mdl->is_true(soft.s) ? l_true : l_undef;
                     if (v == l_undef) {
                         second_undef = true;
                     }
@@ -123,8 +131,19 @@ namespace opt {
                 soft.set_value(l_undef);
             }
             model_ref mdl;
-            s().get_model(mdl);
-            if (mdl) update_assignment(mdl);           
+            s().get_model(mdl);            
+            if (mdl) {
+                TRACE("opt", tout << *mdl << "\n";);
+                for (auto & soft : m_soft) {
+                    if (!mdl->is_true(soft.s)) {
+                        update_bounds();
+                        return;
+                    }
+                    soft.set_value(l_true);
+                    assert_value(soft);
+                }
+                update_assignment();
+            }
         }
 
         //
@@ -134,16 +153,16 @@ namespace opt {
             unsigned sz = m_soft.size();
             for (unsigned i = 0; i < sz; ++i) {
                 auto& soft = m_soft[i];
-                if (soft.value != l_undef) {
+                if (soft.value != l_undef) 
                     continue;
-                }
                 expr_ref_vector asms(m);
                 asms.push_back(soft.s);
                 lbool is_sat = s().check_sat(asms);
                 switch (is_sat) {
                 case l_true:
-                    update_assignment();
-                    SASSERT(soft.value == l_true);
+                    if (!update_assignment())
+                        return l_undef;
+                    SASSERT(soft.value == l_true || m.limit().is_canceled());
                     break;
                 case l_false:
                     soft.set_value(l_false);
@@ -166,8 +185,8 @@ namespace opt {
 
     public:
 
-        maxlex(maxsat_context& c, unsigned id, weights_t & ws, expr_ref_vector const& s):
-            maxsmt_solver_base(c, ws, s),
+        maxlex(maxsat_context& c, unsigned id, vector<soft>& s):
+            maxsmt_solver_base(c, s, id),
             m(c.get_manager()),
             m_c(c) {
             // ensure that soft constraints are sorted with largest soft constraints first.
@@ -191,8 +210,8 @@ namespace opt {
         }
     };
 
-    maxsmt_solver_base* mk_maxlex(maxsat_context& c, unsigned id, weights_t & ws, expr_ref_vector const& soft) {
-        return alloc(maxlex, c, id, ws, soft);
+    maxsmt_solver_base* mk_maxlex(maxsat_context& c, unsigned id, vector<soft>& soft) {
+        return alloc(maxlex, c, id, soft);
     }
 
 }

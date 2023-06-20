@@ -24,6 +24,7 @@ Notes:
 #include "nlsat/nlsat_explain.h"
 #include "math/polynomial/polynomial_cache.h"
 #include "util/rlimit.h"
+#include <iostream>
 
 nlsat::interval_set_ref tst_interval(nlsat::interval_set_ref const & s1,
                                      nlsat::interval_set_ref const & s2,
@@ -311,7 +312,7 @@ static void project(nlsat::solver& s, nlsat::explain& ex, nlsat::var x, unsigned
     s.display(std::cout, num, lits);
     nlsat::scoped_literal_vector result(s);
     ex.project(x, num, lits, result);
-    s.display(std::cout << "\n==>\n", result.size(), result.c_ptr());
+    s.display(std::cout << "\n==>\n", result.size(), result.data());
     std::cout << "\n";
 }
 
@@ -398,12 +399,12 @@ static void tst6() {
     s.set_rvalues(as);
 
 
-    project(s, ex, x0, 2, lits.c_ptr());
-    project(s, ex, x1, 3, lits.c_ptr());
-    project(s, ex, x2, 3, lits.c_ptr());
-    project(s, ex, x2, 2, lits.c_ptr());
-    project(s, ex, x2, 4, lits.c_ptr());
-    project(s, ex, x2, 3, lits.c_ptr()+1);
+    project(s, ex, x0, 2, lits.data());
+    project(s, ex, x1, 3, lits.data());
+    project(s, ex, x2, 3, lits.data());
+    project(s, ex, x2, 2, lits.data());
+    project(s, ex, x2, 4, lits.data());
+    project(s, ex, x2, 3, lits.data()+1);
     
     
 }
@@ -441,7 +442,7 @@ static void tst7() {
     lits.push_back(mk_gt(s, p2));
     lits.push_back(mk_gt(s, p3));
 
-    nlsat::literal_vector litsv(lits.size(), lits.c_ptr());
+    nlsat::literal_vector litsv(lits.size(), lits.data());
     lbool res = s.check(litsv);
     VERIFY(res == l_false);
     for (unsigned i = 0; i < litsv.size(); ++i) {
@@ -451,7 +452,7 @@ static void tst7() {
     std::cout << "\n";
 
     litsv.reset();
-    litsv.append(2, lits.c_ptr());
+    litsv.append(2, lits.data());
     res = s.check(litsv);
     ENSURE(res == l_true);
     s.display(std::cout);
@@ -505,7 +506,7 @@ static void tst8() {
 
     nlsat::scoped_literal_vector lits(s);
     lits.push_back(mk_eq(s, (_a*_x2*_x2) - (_b*_x2) - _c));
-    project(s, ex, x2, 1, lits.c_ptr());
+    project(s, ex, x2, 1, lits.data());
 }
 
 
@@ -560,16 +561,16 @@ static void tst9() {
 #define TEST_ON_OFF()                                   \
     std::cout << "Off ";                                \
     ex.set_signed_project(false);                       \
-    project(s, ex, _x, lits.size()-1, lits.c_ptr());    \
+    project(s, ex, _x, lits.size()-1, lits.data());    \
     std::cout << "On ";                                 \
     ex.set_signed_project(true);                        \
-    project(s, ex, _x, lits.size()-1, lits.c_ptr());    \
+    project(s, ex, _x, lits.size()-1, lits.data());    \
     std::cout << "Off ";                                \
     ex.set_signed_project(false);                       \
-    project(s, ex, _x, lits.size(), lits.c_ptr());      \
+    project(s, ex, _x, lits.size(), lits.data());      \
     std::cout << "On ";                                 \
     ex.set_signed_project(true);                        \
-    project(s, ex, _x, lits.size(), lits.c_ptr())       \
+    project(s, ex, _x, lits.size(), lits.data())       \
 
     TEST_ON_OFF();
 
@@ -620,7 +621,7 @@ static void test_root_literal(nlsat::solver& s, nlsat::explain& ex, nlsat::var x
     ex.test_root_literal(k, x, 1, p, result);
     nlsat::bool_var b = s.mk_root_atom(k, x, i, p);
     s.display(std::cout, nlsat::literal(b, false));
-    s.display(std::cout << " ==> ", result.size(), result.c_ptr());
+    s.display(std::cout << " ==> ", result.size(), result.data());
     std::cout << "\n";
 }
 
@@ -748,7 +749,7 @@ static void tst11() {
     lits.reset();
     lits.push_back(mk_gt(s, p1));
     lits.push_back(mk_eq(s, p2));
-    project_fa(s, ex, x, 2, lits.c_ptr());
+    project_fa(s, ex, x, 2, lits.data());
 //    return;
 
     p1 = ((_x * _x) - (2 * _y * _x)  - _z + (_y *_y));
@@ -759,7 +760,7 @@ static void tst11() {
     lits.reset();
     lits.push_back(mk_lt(s, p1));
     lits.push_back(mk_eq(s, p2));
-    project_fa(s, ex, x, 2, lits.c_ptr());
+    project_fa(s, ex, x, 2, lits.data());
     return;
 
     as.set(z, zero);
@@ -770,7 +771,7 @@ static void tst11() {
     lits.reset();
     lits.push_back(mk_gt(s, p1));
     lits.push_back(mk_eq(s, p2));
-    project_fa(s, ex, x, 2, lits.c_ptr());
+    project_fa(s, ex, x, 2, lits.data());
 
 #if 0
 

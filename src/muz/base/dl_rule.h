@@ -17,19 +17,18 @@ Revision History:
 
 --*/
 
-#ifndef DL_RULE_H_
-#define DL_RULE_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "muz/base/dl_costs.h"
 #include "muz/base/dl_util.h"
 #include "ast/used_vars.h"
-#include "tactic/proof_converter.h"
-#include "tactic/model_converter.h"
+#include "ast/converters/proof_converter.h"
+#include "ast/converters/model_converter.h"
 #include "ast/rewriter/ast_counter.h"
 #include "ast/rewriter/rewriter.h"
 #include "muz/base/hnf.h"
-#include "qe/qe_lite.h"
+#include "qe/lite/qe_lite.h"
 #include "ast/rewriter/var_subst.h"
 #include "ast/datatype_decl_plugin.h"
 #include "ast/rewriter/label_rewriter.h"
@@ -63,7 +62,7 @@ namespace datalog {
                 m_func = n->get_decl();
             }
             else if (m_dt.is_accessor(n)) {
-                sort* s = m.get_sort(n->get_arg(0));
+                sort* s = n->get_arg(0)->get_sort();
                 SASSERT(m_dt.is_datatype(s));
                 if (m_dt.get_datatype_constructors(s)->size() > 1) {
                     m_found = true;
@@ -79,17 +78,18 @@ namespace datalog {
     struct quantifier_finder_proc {
         bool m_exist;
         bool m_univ;
-        quantifier_finder_proc() : m_exist(false), m_univ(false) {}
+        bool m_lambda;
+        quantifier_finder_proc() : m_exist(false), m_univ(false), m_lambda(false) {}
         void operator()(var * n) { }
         void operator()(quantifier * n) {
             switch (n->get_kind()) {
             case forall_k: m_univ = true; break;
             case exists_k: m_exist = true; break;
-            case lambda_k: UNREACHABLE();
+            case lambda_k: m_lambda = true; break;
             }
         }
         void operator()(app * n) { }
-        void reset() { m_exist = m_univ = false; }
+        void reset() { m_exist = m_univ = m_lambda = false; }
     };
 
     struct fd_finder_proc {
@@ -124,7 +124,7 @@ namespace datalog {
         app_ref_vector       m_body;
         app_ref              m_head;
         expr_ref_vector      m_args;
-        svector<bool>        m_neg;
+        bool_vector        m_neg;
         hnf                  m_hnf;
         qe_lite              m_qe;
         label_rewriter       m_rwr;
@@ -150,15 +150,13 @@ namespace datalog {
 
         void remove_labels(expr_ref& fml, proof_ref& pr);
 
-        app_ref ensure_app(expr* e);
-
         void check_app(expr* e);
 
         bool contains_predicate(expr* fml) const;
 
         void bind_variables(expr* fml, bool is_forall, expr_ref& result);
 
-        void mk_negations(app_ref_vector& body, svector<bool>& is_negated);
+        void mk_negations(app_ref_vector& body, bool_vector& is_negated);
 
         void mk_rule_core(expr* fml, proof* p, rule_set& rules, symbol const& name);
 
@@ -273,12 +271,14 @@ namespace datalog {
 
         rule_counter& get_counter() { return m_counter; }
 
+        app_ref ensure_app(expr* e);
+
         void to_formula(rule const& r, expr_ref& result);
 
         std::ostream& display_smt2(rule const& r, std::ostream & out);
 
         bool has_uninterpreted_non_predicates(rule const& r, func_decl*& f) const;
-        void has_quantifiers(rule const& r, bool& existential, bool& universal) const;
+        void has_quantifiers(rule const& r, bool& existential, bool& universal, bool& lam) const;
         bool has_quantifiers(rule const& r) const;
         bool is_finite_domain(rule const& r) const;
 
@@ -287,13 +287,12 @@ namespace datalog {
     class rule : public accounted_object {
         friend class rule_manager;
 
-        app *    m_head;
-        proof*   m_proof;
-        unsigned m_tail_size:20;
-        // unsigned m_reserve:12;
-        unsigned m_ref_cnt;
-        unsigned m_positive_cnt;
-        unsigned m_uninterp_cnt;
+        app*     m_head = nullptr;
+        proof*   m_proof = nullptr;
+        unsigned m_tail_size = 0;
+        unsigned m_ref_cnt = 0;
+        unsigned m_positive_cnt = 0;
+        unsigned m_uninterp_cnt = 0;
         symbol   m_name;
         /**
            The following field is an array of tagged pointers. 
@@ -313,7 +312,6 @@ namespace datalog {
         static unsigned get_obj_size(unsigned n) { return sizeof(rule) + n * sizeof(app *); }
 
         rule() : m_ref_cnt(0), m_name(symbol::null) {}
-        ~rule() {}
 
         void deallocate(ast_manager & m);
 
@@ -367,7 +365,7 @@ namespace datalog {
 
         void get_vars(ast_manager& m, ptr_vector<sort>& sorts) const;
 
-        void display(context & ctx, std::ostream & out) const;
+        void display(context & ctx, std::ostream & out, bool compact = false) const;
 
         /**
            \brief Return the name(s) associated with this rule. Plural for preprocessed (e.g. obtained by inlining) rules.
@@ -389,5 +387,4 @@ namespace datalog {
 
 };
 
-#endif /* DL_RULE_H_ */
 

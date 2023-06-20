@@ -30,8 +30,6 @@ namespace datalog {
     public:
         scale_model_converter(ast_manager& m): m(m), m_trail(m), a(m) {}
 
-        ~scale_model_converter() override {}
-
         void add_new2old(func_decl* new_f, func_decl* old_f) {
             m_trail.push_back(old_f);
             m_trail.push_back(new_f);
@@ -45,34 +43,32 @@ namespace datalog {
             for (auto const& kv : m_new2old) {
                 func_decl* old_p = kv.m_value;
                 func_decl* new_p = kv.m_key;
-                func_interp* old_fi = alloc(func_interp, m, old_p->get_arity());
+				func_interp* new_fi = md->get_func_interp(new_p);
+				expr_ref_vector subst(m);
+				var_subst vs(m, false);
+				expr_ref tmp(m);
 
-                if (new_p->get_arity() == 0) {
-                    old_fi->set_else(md->get_const_interp(new_p));
-                }
-                else {
-                    func_interp* new_fi = md->get_func_interp(new_p);
-                    expr_ref_vector subst(m);
-                    var_subst vs(m, false);
-                    expr_ref tmp(m);
+				if (!new_fi) {
+					TRACE("dl", tout << new_p->get_name() << " has no value in the current model\n";);
+					continue;
+				}
+				for (unsigned i = 0; i < old_p->get_arity(); ++i) {
+					subst.push_back(m.mk_var(i, old_p->get_domain(i)));
+				}
+				subst.push_back(a.mk_numeral(rational(1), a.mk_real()));
 
-                    if (!new_fi) {
-                        TRACE("dl", tout << new_p->get_name() << " has no value in the current model\n";);
-                        dealloc(old_fi);
-                        continue;
-                    }
-                    for (unsigned i = 0; i < old_p->get_arity(); ++i) {
-                        subst.push_back(m.mk_var(i, old_p->get_domain(i)));
-                    }
-                    subst.push_back(a.mk_numeral(rational(1), a.mk_real()));
-
-                    // Hedge that we don't have to handle the general case for models produced
-                    // by Horn clause solvers.
-                    SASSERT(!new_fi->is_partial() && new_fi->num_entries() == 0);
-                    tmp = vs(new_fi->get_else(), subst.size(), subst.c_ptr());
-                    old_fi->set_else(tmp);
-                    old_model->register_decl(old_p, old_fi);
-                }
+				SASSERT(!new_fi->is_partial() && new_fi->num_entries() == 0);
+				tmp = vs(new_fi->get_else(), subst.size(), subst.data());
+				if (old_p->get_arity() == 0) {
+					old_model->register_decl(old_p, tmp);
+				}
+				else {
+					func_interp* old_fi = alloc(func_interp, m, old_p->get_arity());
+					// Hedge that we don't have to handle the general case for models produced
+					// by Horn clause solvers.
+					old_fi->set_else(tmp);
+					old_model->register_decl(old_p, old_fi);
+				}
             }
 
             // register values that have not been scaled.
@@ -122,12 +118,12 @@ namespace datalog {
             return nullptr;
         }
         rule_manager& rm = source.get_rule_manager();
-        rule_set * result = alloc(rule_set, m_ctx);
+        scoped_ptr<rule_set> result = alloc(rule_set, m_ctx);
         unsigned sz = source.get_num_rules();
         rule_ref new_rule(rm);
         app_ref_vector tail(m);
         app_ref head(m);
-        svector<bool> neg;
+        bool_vector neg;
         ptr_vector<sort> vars;
         ref<scale_model_converter> smc;
         if (m_ctx.get_model_converter()) {
@@ -156,7 +152,7 @@ namespace datalog {
             tail.append(m_eqs);
             tail.push_back(a.mk_gt(m.mk_var(num_vars, a.mk_real()), a.mk_numeral(rational(0), false)));
             neg.resize(tail.size(), false);
-            new_rule = rm.mk(new_pred, tail.size(), tail.c_ptr(), neg.c_ptr(), r.name(), true);
+            new_rule = rm.mk(new_pred, tail.size(), tail.data(), neg.data(), r.name(), true);
             result->add_rule(new_rule);
             if (source.is_output_predicate(r.get_decl())) {
                 result->set_output_predicate(new_rule->get_decl());
@@ -168,7 +164,7 @@ namespace datalog {
         }
         m_trail.reset();
         m_cache.reset();
-        return result;
+        return result.detach();
     }
 
     app_ref mk_scale::mk_pred(unsigned sigma_idx, app* q) {
@@ -176,7 +172,7 @@ namespace datalog {
         ptr_vector<sort> domain(f->get_arity(), f->get_domain());
         domain.push_back(a.mk_real());
         func_decl_ref g(m);
-        g = m.mk_func_decl(f->get_name(), f->get_arity() + 1, domain.c_ptr(), f->get_range());
+        g = m.mk_func_decl(f->get_name(), f->get_arity() + 1, domain.data(), f->get_range());
         expr_ref_vector args(m);
         for (unsigned i = 0; i < q->get_num_args(); ++i) {
             expr* arg = q->get_arg(i);
@@ -202,7 +198,7 @@ namespace datalog {
         if (m_mc) {
             m_mc->add_new2old(g, f);
         }
-        return app_ref(m.mk_app(g, q->get_num_args() + 1, args.c_ptr()), m);
+        return app_ref(m.mk_app(g, q->get_num_args() + 1, args.data()), m);
     }
 
     app_ref mk_scale::mk_constraint(unsigned sigma_idx, app* q) {
@@ -229,7 +225,7 @@ namespace datalog {
             for (unsigned i = 0; i < ap->get_num_args(); ++i) {
                 args.push_back(linearize(sigma_idx, ap->get_arg(i)));
             }
-            result = m.mk_app(ap->get_decl(), args.size(), args.c_ptr());
+            result = m.mk_app(ap->get_decl(), args.size(), args.data());
         }
         else if (a.is_numeral(e)) {
             result = a.mk_mul(m.mk_var(sigma_idx, a.mk_real()), e);

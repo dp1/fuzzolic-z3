@@ -20,7 +20,7 @@ Revision History:
 --*/
 
 #include<sstream>
-#include<iostream>
+#include<ostream>
 #include "util/vector.h"
 #include "util/smt2_util.h"
 #include "ast/ast_smt_pp.h"
@@ -33,6 +33,8 @@ Revision History:
 #include "ast/fpa_decl_plugin.h"
 #include "ast/for_each_ast.h"
 #include "ast/decl_collector.h"
+#include "math/polynomial/algebraic_numbers.h"
+
 
 // ---------------------------------------
 // smt_renaming
@@ -60,7 +62,7 @@ symbol smt_renaming::fix_symbol(symbol s, int k) {
 
     if (s.is_numerical()) {
         buffer << s << k;
-        return symbol(buffer.str().c_str());
+        return symbol(buffer.str());
     }
 
     if (!s.bare_str()) {
@@ -76,7 +78,7 @@ symbol smt_renaming::fix_symbol(symbol s, int k) {
         buffer << "!" << k;
     }
 
-    return symbol(buffer.str().c_str());
+    return symbol(buffer.str());
 }
 
 bool smt_renaming::is_legal(char c) {
@@ -195,7 +197,7 @@ class smt_printer {
     }
 
     bool is_bool(expr* e) {
-        return is_bool(m_manager.get_sort(e));
+        return is_bool(e->get_sort());
     }
 
     bool is_proof(sort* s) {
@@ -205,7 +207,7 @@ class smt_printer {
     }
 
     bool is_proof(expr* e) {
-        return is_proof(m_manager.get_sort(e));
+        return is_proof(e->get_sort());
     }
 
     void pp_id(expr* n) {
@@ -372,6 +374,12 @@ class smt_printer {
                 display_rational(val, is_int);
             }
         }
+        else if (m_autil.is_irrational_algebraic_numeral(n)) {
+            anum const & aval = m_autil.to_irrational_algebraic_numeral(n);
+            std::ostringstream buffer;
+            m_autil.am().display_root_smt2(buffer, aval);            
+            m_out << buffer.str();
+        }
         else if (m_sutil.str.is_string(n, s)) {
             std::string encs = s.encode();
             m_out << "\"";
@@ -442,11 +450,11 @@ class smt_printer {
                 while (idx < args.size() && !args[idx])
                     idx++;
                 if (idx >= args.size()) break;
-                sort *   s = m_manager.get_sort(args[idx]);
+                sort *   s = args[idx]->get_sort();
                 unsigned next = idx + 1;
 
                 // check if there is only a single one
-                while (next < args.size() && (!args[next] || m_manager.get_sort(args[next]) != s))
+                while (next < args.size() && (!args[next] || args[next]->get_sort() != s))
                     next++;
                 if (next >= args.size()) {
                     args[idx] = 0;
@@ -457,7 +465,7 @@ class smt_printer {
                 // otherwise print all of the relevant sort
                 m_out << " (distinct";
                 for (unsigned i = idx; i < args.size(); ++i) {
-                    if (args[i] && s == m_manager.get_sort(args[i])) {
+                    if (args[i] && s == args[i]->get_sort()) {
                         m_out << " ";
                         pp_marked_expr(args[i]);
                         args[i] = 0;
@@ -783,17 +791,23 @@ public:
         ptr_vector<datatype::def> defs;
         util.get_defs(s, defs);
 
+        unsigned j = 0;
         for (datatype::def* d : defs) {
             sort_ref sr = d->instantiate(ps);
-            if (mark.is_marked(sr)) return; // already processed
+            if (mark.is_marked(sr)) 
+                continue;
             mark.mark(sr, true);
+            defs[j++] = d;
         }
-
+        defs.shrink(j);
+        if (defs.empty())
+            return;
+        
         m_out << "(declare-datatypes (";
         bool first_def = true;
         for (datatype::def* d : defs) {
             if (!first_def) m_out << "\n    "; else first_def = false;
-            m_out << "(" << d->name() << " " << d->params().size() << ")";
+            m_out << "(" << ensure_quote(d->name()) << " " << d->params().size() << ")";
         }
         m_out << ") (";
         bool first_sort = true;
@@ -916,6 +930,14 @@ void ast_smt_pp::display_ast_smt2(std::ostream& strm, ast* a, unsigned indent, u
         p(to_sort(a));
     }
 }
+
+void ast_smt_pp::display_sort_decl(std::ostream& out, sort* s, ast_mark& seen) {
+    ptr_vector<quantifier> ql;
+    smt_renaming rn;
+    smt_printer p(out, m_manager, ql, rn, m_logic, false, m_simplify_implies, 0, 0, nullptr);
+    p.pp_sort_decl(seen, s);
+}
+
 
 
 void ast_smt_pp::display_smt2(std::ostream& strm, expr* n) {

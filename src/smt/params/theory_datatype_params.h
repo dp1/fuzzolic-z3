@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef THEORY_DATATYPE_PARAMS_H_
-#define THEORY_DATATYPE_PARAMS_H_
+#pragma once
 
 #include "smt/params/smt_params_helper.hpp"
 
@@ -33,9 +32,8 @@ struct theory_datatype_params {
         m_dt_lazy_splits = p.dt_lazy_splits(); 
     }
 
-    void display(std::ostream & out) const { out << "m_dt_lazy_splits=" << m_dt_lazy_splits << std::endl; }
+    void display(std::ostream & out) const { out << "m_dt_lazy_splits=" << m_dt_lazy_splits << '\n'; }
 };
 
 
-#endif /* THEORY_DATATYPE_PARAMS_H_ */
 

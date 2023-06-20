@@ -101,12 +101,12 @@ static void dump_app_vector(std::ostream & out, ptr_vector<app> const & v, ast_m
 #include "ast/pattern/database.h"
 
 
-pattern_inference_cfg::pattern_inference_cfg(ast_manager & m, pattern_inference_params & params):
+pattern_inference_cfg::pattern_inference_cfg(ast_manager & m, pattern_inference_params const & params):
     m(m),
     m_params(params),
     m_bfid(m.get_basic_family_id()),
     m_afid(m.mk_family_id("arith")),
-    m_le(m),
+    m_le(),
     m_nested_arith_only(true),
     m_block_loop_patterns(params.m_pi_block_loop_patterns),
     m_candidates(m),
@@ -232,7 +232,7 @@ void pattern_inference_cfg::collect::save_candidate(expr * n, unsigned delta) {
 
         app * new_node = nullptr;
         if (changed)
-            new_node = m.mk_app(decl, buffer.size(), buffer.c_ptr());
+            new_node = m.mk_app(decl, buffer.size(), buffer.data());
         else
             new_node = to_app(n);
         save(n, delta, alloc(info, m, new_node, free_vars, size));
@@ -442,7 +442,7 @@ void pattern_inference_cfg::candidates2multi_patterns(unsigned max_num_patterns,
     for (unsigned j = 0; j < m_pre_patterns.size(); j++) {
         pre_pattern * curr = m_pre_patterns[j];
         if (curr->m_free_vars.num_elems() == m_num_bindings) {
-            app * new_pattern = m.mk_pattern(curr->m_exprs.size(), curr->m_exprs.c_ptr());
+            app * new_pattern = m.mk_pattern(curr->m_exprs.size(), curr->m_exprs.data());
             result.push_back(new_pattern);
             if (result.size() >= max_num_patterns)
                 return;
@@ -601,7 +601,7 @@ bool pattern_inference_cfg::reduce_quantifier(
             }
             else {
                 quantifier_ref tmp(m);
-                tmp    = m.update_quantifier(q, new_patterns.size(), (expr**) new_patterns.c_ptr(), q->get_expr());
+                tmp    = m.update_quantifier(q, new_patterns.size(), (expr**) new_patterns.data(), q->get_expr());
                 result = m.update_quantifier_weight(tmp, new_weight);
                 TRACE("pattern_inference", tout << "found patterns in database, weight: " << new_weight << "\n" << mk_pp(result, m) << "\n";);
             }
@@ -631,7 +631,8 @@ bool pattern_inference_cfg::reduce_quantifier(
         if (new_patterns.empty()) {
             mk_patterns(q->get_num_decls(), new_body, 0, nullptr, new_patterns);
             if (m_params.m_pi_warnings && !new_patterns.empty()) {
-                warning_msg("ignoring nopats annotation because Z3 couldn't find any other pattern (quantifier id: %s)", q->get_qid().str().c_str());
+                auto str = q->get_qid().str();
+                warning_msg("ignoring nopats annotation because Z3 couldn't find any other pattern (quantifier id: %s)", str.c_str());
             }
         }
     }
@@ -644,8 +645,9 @@ bool pattern_inference_cfg::reduce_quantifier(
             if (!new_patterns.empty()) {
                 weight = std::max(weight, static_cast<int>(m_params.m_pi_arith_weight));
                 if (m_params.m_pi_warnings) {
+                    auto str = q->get_qid().str();
                     warning_msg("using arith. in pattern (quantifier id: %s), the weight was increased to %d (this value can be modified using PI_ARITH_WEIGHT=<val>).",
-                                q->get_qid().str().c_str(), weight);
+                                str.c_str(), weight);
                 }
             }
         }
@@ -659,15 +661,16 @@ bool pattern_inference_cfg::reduce_quantifier(
             if (!new_patterns.empty()) {
                 weight = std::max(weight, static_cast<int>(m_params.m_pi_non_nested_arith_weight));
                 if (m_params.m_pi_warnings) {
+                    auto str = q->get_qid().str();
                     warning_msg("using non nested arith. pattern (quantifier id: %s), the weight was increased to %d (this value can be modified using PI_NON_NESTED_ARITH_WEIGHT=<val>).",
-                                q->get_qid().str().c_str(), weight);
+                                str.c_str(), weight);
                 }
                 // verbose_stream() << mk_pp(q, m) << "\n";
             }
         }
     }
 
-    quantifier_ref new_q(m.update_quantifier(q, new_patterns.size(), (expr**) new_patterns.c_ptr(), new_body), m);
+    quantifier_ref new_q(m.update_quantifier(q, new_patterns.size(), (expr**) new_patterns.data(), new_body), m);
     if (weight != q->get_weight())
         new_q = m.update_quantifier_weight(new_q, weight);
     if (m.proofs_enabled()) {
@@ -686,9 +689,10 @@ bool pattern_inference_cfg::reduce_quantifier(
             mk_patterns(result2->get_num_decls(), result2->get_expr(), 0, nullptr, new_patterns);
             if (!new_patterns.empty()) {
                 if (m_params.m_pi_warnings) {
-                    warning_msg("pulled nested quantifier to be able to find an usable pattern (quantifier id: %s)", q->get_qid().str().c_str());
+                    auto str = q->get_qid().str();
+                    warning_msg("pulled nested quantifier to be able to find an usable pattern (quantifier id: %s)", str.c_str());
                 }
-                new_q = m.update_quantifier(result2, new_patterns.size(), (expr**) new_patterns.c_ptr(), result2->get_expr());
+                new_q = m.update_quantifier(result2, new_patterns.size(), (expr**) new_patterns.data(), result2->get_expr());
                 if (m.proofs_enabled()) {
                     result_pr = m.mk_transitivity(new_pr, m.mk_quant_intro(result2, new_q, m.mk_bind_proof(new_q, m.mk_reflexivity(new_q->get_expr()))));
                 }
@@ -699,7 +703,8 @@ bool pattern_inference_cfg::reduce_quantifier(
 
     if (new_patterns.empty()) {
         if (m_params.m_pi_warnings) {
-            warning_msg("failed to find a pattern for quantifier (quantifier id: %s)", q->get_qid().str().c_str());
+            auto str = q->get_qid().str();
+            warning_msg("failed to find a pattern for quantifier (quantifier id: %s)", str.c_str());
         }
         TRACE("pi_failed", tout << mk_pp(q, m) << "\n";);
     }
@@ -719,7 +724,7 @@ bool pattern_inference_cfg::reduce_quantifier(
     return true;
 }
 
-pattern_inference_rw::pattern_inference_rw(ast_manager& m, pattern_inference_params & params):
+pattern_inference_rw::pattern_inference_rw(ast_manager& m, pattern_inference_params const & params):
     rewriter_tpl<pattern_inference_cfg>(m, m.proofs_enabled(), m_cfg),
     m_cfg(m, params)
 {}    

@@ -16,6 +16,7 @@ Author:
 Revision History:
 
 --*/
+#include <cstring>
 #include <sstream>
 #include <iomanip>
 #include "util/mpz.h"
@@ -40,47 +41,47 @@ Revision History:
 
 #if defined(_MP_GMP)
 // Use LEHMER only if not using GMP
-// LEHMER assumes 32-bit digits, so it cannot be used with MSBIGNUM library + 64-bit binary
 #define EUCLID_GCD
 #else
 #define LEHMER_GCD
 #endif
 
 
-#if defined(_WINDOWS) && !defined(_M_ARM) && !defined(_M_ARM64)
+#if defined(__GNUC__)
+#define _trailing_zeros32(X) __builtin_ctz(X)
+#elif defined(_WINDOWS) && (defined(_M_X86) || (defined(_M_X64) && !defined(_M_ARM64EC)))
 // This is needed for _tzcnt_u32 and friends.
 #include <immintrin.h>
 #define _trailing_zeros32(X) _tzcnt_u32(X)
+#else
+static uint32_t _trailing_zeros32(uint32_t x) {
+    uint32_t r = 0;
+    for (; 0 == (x & 1) && r < 32; ++r, x >>= 1);
+    return r;
+}
 #endif
 
-#if defined(__GNUC__)
-#define _trailing_zeros32(X) __builtin_ctz(X)
-#endif
-
-#if (defined(__LP64__) || defined(_WIN64)) && !defined(_M_ARM) && !defined(_M_ARM64)
+#if (defined(__LP64__) || defined(_WIN64)) && defined(_M_X64) && !defined(_M_ARM64EC)
  #if defined(__GNUC__)
  #define _trailing_zeros64(X) __builtin_ctzll(X)
  #else
  #define _trailing_zeros64(X) _tzcnt_u64(X)
  #endif
 #else
-inline uint64_t _trailing_zeros64(uint64_t x) {
+static uint64_t _trailing_zeros64(uint64_t x) {
     uint64_t r = 0;
     for (; 0 == (x & 1) && r < 64; ++r, x >>= 1);
     return r;
 }
+#endif
 
-#if defined(_WINDOWS) && !defined(_M_ARM) && !defined(_M_ARM64)
-// _trailing_zeros32 already defined using intrinsics
-#else
-inline uint32_t _trailing_zeros32(uint32_t x) {
-    uint32_t r = 0;
-    for (; 0 == (x & 1) && r < 32; ++r, x >>= 1);
-    return r;
+unsigned trailing_zeros(uint32_t x) {
+    return static_cast<unsigned>(_trailing_zeros32(x));
 }
-#endif
-#endif
 
+unsigned trailing_zeros(uint64_t x) {
+    return static_cast<unsigned>(_trailing_zeros64(x));
+}
 
 #define _bit_min(x, y) (y + ((x - y) & ((int)(x - y) >> 31)))
 #define _bit_max(x, y) (x - ((x - y) & ((int)(x - y) >> 31)))
@@ -95,36 +96,10 @@ unsigned u_gcd(unsigned u, unsigned v) {
     if (u == v) return u << shift;
     do {
         v >>= _trailing_zeros32(v);        
-#if 1
         unsigned diff = u - v;
         unsigned mdiff = diff & (unsigned)((int)diff >> 31);
         u = v + mdiff; // min
         v = diff - 2 * mdiff;   // if v <= u: u - v, if v > u: v - u = u - v - 2 * (u - v)
-#endif
-#if 0
-        unsigned t = _bit_max(u, v);
-        u = _bit_min(u, v);
-        v = t;
-        v -= u;        
-#endif
-#if 0
-        unsigned t = std::max(u, v);
-        u = std::min(u,v);
-        v = t;
-        v -= u;        
-#endif
-#if 0
-        if (u > v) std::swap(u, v);
-        v -= u;        
-#endif
-#if 0
-        unsigned d1 = u - v;
-        unsigned d2 = v - u;
-        unsigned md21 = d2 & (unsigned)((int)d1 >> 31);
-        unsigned md12 = d1 & (unsigned)((int)d2 >> 31);
-        u = _bit_min(u, v);
-        v = md12 | md21;
-#endif
     }
     while (v != 0);
     return u << shift;
@@ -146,9 +121,11 @@ uint64_t u64_gcd(uint64_t u, uint64_t v) {
 }
 
 
+
 template<bool SYNCH>
 mpz_manager<SYNCH>::mpz_manager():
     m_allocator("mpz_manager") {
+
 #ifndef _MP_GMP
     if (sizeof(digit_t) == sizeof(uint64_t)) {
         // 64-bit machine
@@ -211,19 +188,36 @@ mpz_manager<SYNCH>::~mpz_manager() {
 template<bool SYNCH>
 mpz_cell * mpz_manager<SYNCH>::allocate(unsigned capacity) {
     SASSERT(capacity >= m_init_cell_capacity);
-    MPZ_BEGIN_CRITICAL();
-    mpz_cell * cell  = reinterpret_cast<mpz_cell *>(m_allocator.allocate(cell_size(capacity)));
-    MPZ_END_CRITICAL();
+    mpz_cell * cell;
+#ifdef SINGLE_THREAD
+    cell = reinterpret_cast<mpz_cell*>(m_allocator.allocate(cell_size(capacity)));
+#else
+    if (SYNCH) {
+        cell = reinterpret_cast<mpz_cell*>(memory::allocate(cell_size(capacity)));
+    }
+    else {
+        cell = reinterpret_cast<mpz_cell*>(m_allocator.allocate(cell_size(capacity)));
+    }
+#endif
     cell->m_capacity = capacity;
+
     return cell;
 }
 
 template<bool SYNCH>
 void mpz_manager<SYNCH>::deallocate(bool is_heap, mpz_cell * ptr) { 
     if (is_heap) {
-        MPZ_BEGIN_CRITICAL();
+
+#ifdef SINGLE_THREAD
         m_allocator.deallocate(cell_size(ptr->m_capacity), ptr); 
-        MPZ_END_CRITICAL();
+#else
+        if (SYNCH) {
+            memory::deallocate(ptr);
+        }
+        else {
+            m_allocator.deallocate(cell_size(ptr->m_capacity), ptr);        
+        }
+#endif
     }
 }
 
@@ -239,9 +233,10 @@ mpz_manager<SYNCH>::sign_cell::sign_cell(mpz_manager& m, mpz const& a):
 
 
 template<bool SYNCH>
-void mpz_manager<SYNCH>::del(mpz & a) { 
+void mpz_manager<SYNCH>::del(mpz_manager<SYNCH>* m, mpz & a) { 
     if (a.m_ptr) {
-        deallocate(a.m_owner == mpz_self, a.m_ptr); 
+        SASSERT(m);
+        m->deallocate(a.m_owner == mpz_self, a.m_ptr); 
         a.m_ptr = nullptr;
         a.m_kind = mpz_small;
         a.m_owner = mpz_self;
@@ -570,12 +565,13 @@ void mpz_manager<SYNCH>::machine_div_rem(mpz const & a, mpz const & b, mpz & q, 
 template<bool SYNCH>
 void mpz_manager<SYNCH>::machine_div(mpz const & a, mpz const & b, mpz & c) {
     STRACE("mpz", tout << "[mpz-ext] machine-div(" << to_string(a) << ",  " << to_string(b) << ") == ";); 
-    if (is_small(a) && is_small(b)) {
+    if (is_small(b) && i64(b) == 0)
+        throw default_exception("division by 0"); 
+
+    if (is_small(a) && is_small(b)) 
         set_i64(c, i64(a) / i64(b));
-    }
-    else {
+    else 
         big_div(a, b, c);
-    }
     STRACE("mpz", tout << to_string(c) << "\n";);
 }
 
@@ -699,7 +695,7 @@ void mpz_manager<SYNCH>::big_add_sub(mpz const & a, mpz const & b, mpz & c) {
     mpz_stack tmp;
     if (SUB)
         sign_b = -sign_b;
-    size_t real_sz;
+    unsigned real_sz;
     if (ca.sign() == sign_b) {
         unsigned sz  = std::max(ca.cell()->m_size, cb.cell()->m_size)+1;
         allocate_if_needed(tmp, sz);
@@ -707,7 +703,7 @@ void mpz_manager<SYNCH>::big_add_sub(mpz const & a, mpz const & b, mpz & c) {
                           cb.cell()->m_digits, cb.cell()->m_size, 
                           tmp.m_ptr->m_digits, sz, &real_sz);
         SASSERT(real_sz <= sz);
-        set(*tmp.m_ptr, c, ca.sign(), static_cast<unsigned>(real_sz));
+        set(*tmp.m_ptr, c, ca.sign(), real_sz);
     }
     else {
         digit_t borrow;
@@ -1464,9 +1460,11 @@ void mpz_manager<SYNCH>::bitwise_xor(mpz const & a, mpz const & b, mpz & c) {
 template<bool SYNCH>
 void mpz_manager<SYNCH>::bitwise_not(unsigned sz, mpz const & a, mpz & c) {
     SASSERT(is_nonneg(a));
-    if (is_small(a) && sz <= 63) {
-        int64_t mask = (static_cast<int64_t>(1) << sz) - static_cast<int64_t>(1);
-        set_i64(c, (~ i64(a)) & mask);
+    if (is_small(a) && sz <= 64) {
+        uint64_t v = ~get_uint64(a);
+        unsigned zero_out = 64 - sz;
+        v = (v << zero_out) >> zero_out;
+        set(c, v);
     }
     else {
         mpz a1, a2, m, tmp;
@@ -1534,12 +1532,12 @@ void mpz_manager<SYNCH>::big_set(mpz & target, mpz const & source) {
 template<bool SYNCH>
 int mpz_manager<SYNCH>::big_compare(mpz const & a, mpz const & b) {
 #ifndef _MP_GMP
-    sign_cell ca(*this, a), cb(*this, b);
 
-    if (ca.sign() > 0) {
+    if (sign(a) > 0) {
         // a is positive
-        if (cb.sign() > 0) {
+        if (sign(b) > 0) {
             // a & b are positive
+            sign_cell ca(*this, a), cb(*this, b);
             return m_mpn_manager.compare(ca.cell()->m_digits, ca.cell()->m_size,
                                          cb.cell()->m_digits, cb.cell()->m_size);
         }
@@ -1550,12 +1548,13 @@ int mpz_manager<SYNCH>::big_compare(mpz const & a, mpz const & b) {
     }
     else {
         // a is negative
-        if (cb.sign() > 0) {
+        if (sign(b) > 0) {
             // b is positive
             return -1; // a < b
         }
         else {
             // a & b are negative
+            sign_cell ca(*this, a), cb(*this, b);
             return m_mpn_manager.compare(cb.cell()->m_digits, cb.cell()->m_size,
                                          ca.cell()->m_digits, ca.cell()->m_size);
         }
@@ -1684,9 +1683,12 @@ double mpz_manager<SYNCH>::get_double(mpz const & a) const {
     for (unsigned i = 0; i < sz; i++) {
         r += d * static_cast<double>(digits(a)[i]);
         if (sizeof(digit_t) == sizeof(uint64_t))
-            d *= static_cast<double>(UINT64_MAX); // 64-bit version
+            d *= (1.0 + static_cast<double>(UINT64_MAX)); // 64-bit version, multiply by 2^64
         else
-            d *= static_cast<double>(UINT_MAX);   // 32-bit version
+            d *= (1.0 + static_cast<double>(UINT_MAX));   // 32-bit version, multiply by 2^32
+    }
+    if (!(r >= 0.0)) {
+        r = static_cast<double>(UINT64_MAX); // some large number
     }
     return a.m_val < 0 ? -r : r;
 #else
@@ -1715,8 +1717,8 @@ void mpz_manager<SYNCH>::display(std::ostream & out, mpz const & a) const {
         // GMP version
         size_t sz = mpz_sizeinbase(*a.m_ptr, 10) + 2;
         sbuffer<char, 1024> buffer(sz, 0);
-        mpz_get_str(buffer.c_ptr(), 10, *a.m_ptr);
-        out << buffer.c_ptr();
+        mpz_get_str(buffer.data(), 10, *a.m_ptr);
+        out << buffer.data();
 #endif
     } 
 }
@@ -1775,20 +1777,21 @@ void mpz_manager<SYNCH>::display_hex(std::ostream & out, mpz const & a, unsigned
         unsigned requiredLength = num_bits / 4;
         unsigned padding = requiredLength > sz ? requiredLength - sz : 0;
         sbuffer<char, 1024> buffer(sz, 0);
-        mpz_get_str(buffer.c_ptr(), 16, *(a.m_ptr));
+        mpz_get_str(buffer.data(), 16, *(a.m_ptr));
         for (unsigned i = 0; i < padding; ++i) {
             out << "0";
         }
-        out << buffer.c_ptr() + (sz > requiredLength ? sz - requiredLength : 0);
+        out << buffer.data() + (sz > requiredLength ? sz - requiredLength : 0);
 #endif
     }
     out.copyfmt(fmt);
 }
 
-void display_binary_data(std::ostream &out, unsigned val, unsigned numBits) {
-    SASSERT(numBits <= sizeof(unsigned)*8);
-    for (int shift = numBits-1; shift >= 0; --shift) {
-        if (val & (1 << shift)) {
+static void display_binary_data(std::ostream &out, uint64_t val, uint64_t numBits) {
+    for (uint64_t shift = numBits; shift-- > 64ull; ) out << "0";
+    if (numBits > 64) numBits = 64;
+    for (uint64_t shift = numBits; shift-- > 0; ) {
+        if (val & (1ull << shift)) {
             out << "1";
         } else {
             out << "0";
@@ -1798,9 +1801,9 @@ void display_binary_data(std::ostream &out, unsigned val, unsigned numBits) {
 
 template<bool SYNCH>
 void mpz_manager<SYNCH>::display_bin(std::ostream & out, mpz const & a, unsigned num_bits) const {
-    if (is_uint(a)) {
-        display_binary_data(out, get_uint(a), num_bits);
-    } 
+    if (is_small(a)) {
+        display_binary_data(out, get_uint64(a), num_bits);
+    }
     else {
 #ifndef _MP_GMP
         digit_t *ds = digits(a);
@@ -1828,11 +1831,11 @@ void mpz_manager<SYNCH>::display_bin(std::ostream & out, mpz const & a, unsigned
         size_t sz = mpz_sizeinbase(*(a.m_ptr), 2);
         unsigned padding = num_bits > sz ? num_bits - sz : 0;
         sbuffer<char, 1024> buffer(sz, 0);
-        mpz_get_str(buffer.c_ptr(), 2, *(a.m_ptr));
+        mpz_get_str(buffer.data(), 2, *(a.m_ptr));
         for (unsigned i = 0; i < padding; ++i) {
             out << "0";
         }
-        out << buffer.c_ptr() + (sz > num_bits ? sz - num_bits : 0);
+        out << buffer.data() + (sz > num_bits ? sz - num_bits : 0);
 #endif
     }
 }
@@ -1847,7 +1850,7 @@ std::string mpz_manager<SYNCH>::to_string(mpz const & a) const {
 template<bool SYNCH>
 unsigned mpz_manager<SYNCH>::hash(mpz const & a) {
     if (is_small(a))
-        return a.m_val;
+        return ::abs(a.m_val);
 #ifndef _MP_GMP
     unsigned sz = size(a);
     if (sz == 1)
@@ -2253,6 +2256,9 @@ template<bool SYNCH>
 unsigned mpz_manager<SYNCH>::mlog2(mpz const & a) {
     if (is_nonneg(a))
         return 0;
+    if (is_small(a) && a.m_val == INT_MIN)
+        return ::log2((unsigned)a.m_val);
+        
     if (is_small(a))
         return ::log2((unsigned)-a.m_val);
 #ifndef _MP_GMP
@@ -2465,6 +2471,33 @@ bool mpz_manager<SYNCH>::decompose(mpz const & a, svector<digit_t> & digits) {
     return r;
 #endif
     }
+}
+
+template<bool SYNCH>
+bool mpz_manager<SYNCH>::get_bit(mpz const & a, unsigned index) {
+    if (is_small(a)) {
+        SASSERT(a.m_val >= 0);
+        if (index >= 8*sizeof(digit_t))
+            return false;
+        return 0 != (a.m_val & (1ull << (digit_t)index));
+    }
+    unsigned i = index / (sizeof(digit_t)*8);
+    unsigned o = index % (sizeof(digit_t)*8);
+
+#ifndef _MP_GMP
+    mpz_cell * cell_a = a.m_ptr;
+    unsigned sz = cell_a->m_size;
+    if (sz*sizeof(digit_t)*8 <= index)
+        return false;
+    return 0 != (cell_a->m_digits[i] & (1ull << (digit_t)o));
+#else
+    SASSERT(!is_neg(a));
+    svector<digit_t> digits;
+    decompose(a, digits);
+    if (digits.size()*sizeof(digit_t)*8 <= index)
+        return false;
+    return 0 != (digits[i] & (1ull << (digit_t)o));    
+#endif
 }
 
 template<bool SYNCH>

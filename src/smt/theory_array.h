@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef THEORY_ARRAY_H_
-#define THEORY_ARRAY_H_
+#pragma once
 
 #include "smt/theory_array_base.h"
 #include "smt/params/theory_array_params.h"
@@ -29,14 +28,13 @@ namespace smt {
         unsigned   m_num_axiom1, m_num_axiom2a, m_num_axiom2b, m_num_extensionality, m_num_eq_splits;
         unsigned   m_num_map_axiom, m_num_default_map_axiom;
         unsigned   m_num_select_const_axiom, m_num_default_store_axiom, m_num_default_const_axiom, m_num_default_as_array_axiom;
-        unsigned   m_num_select_as_array_axiom;
+        unsigned   m_num_select_as_array_axiom, m_num_default_lambda_axiom;
         void reset() { memset(this, 0, sizeof(theory_array_stats)); }
         theory_array_stats() { reset(); }
     };
 
     class theory_array : public theory_array_base {
     protected:
-        typedef trail_stack<theory_array> th_trail_stack;
         typedef union_find<theory_array>  th_union_find;
 
         struct var_data {
@@ -52,10 +50,9 @@ namespace smt {
         theory_array_params&            m_params;
         theory_array_stats              m_stats;
         th_union_find                   m_find;
-        th_trail_stack                  m_trail_stack;
+        trail_stack                     m_trail_stack;
         unsigned                        m_final_check_idx;
 
-        void init(context * ctx) override;
         theory_var mk_var(enode * n) override;
         bool internalize_atom(app * atom, bool gate_ctx) override;
         bool internalize_term(app * term) override;
@@ -69,7 +66,7 @@ namespace smt {
         void reset_eh() override;
         void init_search_eh() override { m_final_check_idx = 0; }
 
-        virtual void set_prop_upward(theory_var v);
+        void set_prop_upward(theory_var v) override;
         virtual void set_prop_upward(enode* n);
         virtual void set_prop_upward(theory_var v, var_data* d);
 
@@ -96,17 +93,17 @@ namespace smt {
 
         static void display_ids(std::ostream & out, unsigned n, enode * const * v);
     public:
-        theory_array(ast_manager & m, theory_array_params & params);
+        theory_array(context& ctx);
         ~theory_array() override;
 
-        theory * mk_fresh(context * new_ctx) override { return alloc(theory_array, new_ctx->get_manager(), new_ctx->get_fparams()); }
+        theory * mk_fresh(context * new_ctx) override { return alloc(theory_array, *new_ctx); }
 
         char const * get_name() const override { return "array"; }
 
         virtual void display_var(std::ostream & out, theory_var v) const;
         void display(std::ostream & out) const override;
         void collect_statistics(::statistics & st) const override;
-        th_trail_stack & get_trail_stack() { return m_trail_stack; }
+        trail_stack & get_trail_stack() { return m_trail_stack; }
         virtual void merge_eh(theory_var v1, theory_var v2, theory_var, theory_var);
         static void after_merge_eh(theory_var r1, theory_var r2, theory_var v1, theory_var v2) {}
         void unmerge_eh(theory_var v1, theory_var v2);
@@ -116,5 +113,4 @@ namespace smt {
 
 };
 
-#endif /* THEORY_ARRAY_H_ */
 

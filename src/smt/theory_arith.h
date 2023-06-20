@@ -17,8 +17,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef THEORY_ARITH_H_
-#define THEORY_ARITH_H_
+#pragma once
 
 #include "util/map.h"
 #include "util/heap.h"
@@ -46,8 +45,11 @@ namespace smt {
         unsigned m_assert_lower, m_assert_upper, m_assert_diseq, m_core2th_eqs, m_core2th_diseqs;
         unsigned m_th2core_eqs, m_th2core_diseqs, m_bound_props, m_offset_eqs, m_fixed_eqs, m_offline_eqs;
         unsigned m_max_min; 
+        unsigned m_assume_eqs;
         unsigned m_gb_simplify, m_gb_superpose, m_gb_compute_basis, m_gb_num_processed;
         unsigned m_nl_branching, m_nl_linear, m_nl_bounds, m_nl_cross_nested;
+        unsigned m_branch_infeasible_int, m_branch_infeasible_var;
+        unsigned m_tableau_max_rows, m_tableau_max_columns;
 
         void reset() { memset(this, 0, sizeof(theory_arith_stats)); }
         theory_arith_stats() { reset(); }
@@ -252,8 +254,8 @@ namespace smt {
             void append(unsigned sz, literal const* ls) { m_lits.append(sz, ls); }
             void append(unsigned sz, enode_pair const* ps) { m_eqs.append(sz, ps); }
             unsigned num_params() const { return empty()?0:m_eq_coeffs.size() + m_lit_coeffs.size() + 1; }
-            numeral const* lit_coeffs() const { return m_lit_coeffs.c_ptr(); }
-            numeral const* eq_coeffs() const { return m_eq_coeffs.c_ptr(); }
+            numeral const* lit_coeffs() const { return m_lit_coeffs.data(); }
+            numeral const* eq_coeffs() const { return m_eq_coeffs.data(); }
             parameter* params(char const* name);
             std::ostream& display(theory_arith& th, std::ostream& out) const;
         };
@@ -292,7 +294,7 @@ namespace smt {
                 m_bound_kind(k),
                 m_atom(a) {
             }
-            virtual ~bound() {}
+            virtual ~bound() = default;
             theory_var get_var() const { return m_var; }
             bound_kind get_bound_kind() const { return static_cast<bound_kind>(m_bound_kind); }
             bool is_atom() const { return m_atom; }
@@ -317,7 +319,6 @@ namespace smt {
         public:
             atom(bool_var bv, theory_var v, inf_numeral const & k, atom_kind kind);
             atom_kind get_atom_kind() const { return static_cast<atom_kind>(m_atom_kind); }
-            ~atom() override {}
             inline inf_numeral const & get_k() const { return m_k; }
             bool_var get_bool_var() const { return m_bvar; }
             bool is_true() const { return m_is_true; }
@@ -339,7 +340,6 @@ namespace smt {
                 m_rhs(rhs) {
                 SASSERT(m_lhs->get_root() == m_rhs->get_root());
             }
-            ~eq_bound() override {}
             bool has_justification() const override { return true; }
             void push_justification(antecedents& a, numeral const& coeff, bool proofs_enabled) override {
                 SASSERT(m_lhs->get_root() == m_rhs->get_root());
@@ -355,7 +355,6 @@ namespace smt {
             friend class theory_arith;
         public:
             derived_bound(theory_var v, inf_numeral const & val, bound_kind k):bound(v, val, k, false) {}
-            ~derived_bound() override {}
             literal_vector const& lits() const { return m_lits; }
             eq_vector const& eqs() const { return m_eqs; }
             bool has_justification() const override { return true; }
@@ -372,7 +371,6 @@ namespace smt {
             friend class theory_arith;
         public:
             justified_derived_bound(theory_var v, inf_numeral const & val, bound_kind k):derived_bound(v, val, k) {}
-            ~justified_derived_bound() override {}
             bool has_justification() const override { return true; }
             void push_justification(antecedents& a, numeral const& coeff, bool proofs_enabled) override;
             void push_lit(literal l, numeral const& coeff) override;
@@ -529,7 +527,7 @@ namespace smt {
 
         bool has_var(expr * v) const { return get_context().e_internalized(v) && get_context().get_enode(v)->get_th_var(get_id()) != null_theory_var; }
         theory_var expr2var(expr * v) const { SASSERT(get_context().e_internalized(v)); return get_context().get_enode(v)->get_th_var(get_id()); }
-        expr * var2expr(theory_var v) const { return get_enode(v)->get_owner(); }
+        expr * var2expr(theory_var v) const { return get_enode(v)->get_expr(); }
         bool reflection_enabled() const;
         bool reflect(app * n) const;
         unsigned lazy_pivoting_lvl() const { return m_params.m_arith_lazy_pivoting_lvl; }
@@ -539,16 +537,13 @@ namespace smt {
         int random_lower() const { return m_params.m_arith_random_lower; }
         int random_upper() const { return m_params.m_arith_random_upper; }
         unsigned blands_rule_threshold() const { return m_params.m_arith_blands_rule_threshold; }
-        bound_prop_mode propagation_mode() const { return m_num_conflicts < m_params.m_arith_propagation_threshold ? m_params.m_arith_bound_prop : BP_NONE; }
+        bound_prop_mode propagation_mode() const { return m_num_conflicts < m_params.m_arith_propagation_threshold ? m_params.m_arith_bound_prop : bound_prop_mode::BP_NONE; }
         bool adaptive() const { return m_params.m_arith_adaptive; }
         double adaptive_assertion_threshold() const { return m_params.m_arith_adaptive_assertion_threshold; }
         unsigned max_lemma_size() const { return m_params.m_arith_max_lemma_size; }
         unsigned small_lemma_size() const { return m_params.m_arith_small_lemma_size; }
         bool relax_bounds() const { return m_params.m_arith_stronger_lemmas; }
         bool skip_big_coeffs() const { return m_params.m_arith_skip_rows_with_big_coeffs; }
-        bool dump_lemmas() const { return m_params.m_arith_dump_lemmas; }
-        void dump_lemmas(literal l, antecedents const& ante);
-        void dump_lemmas(literal l, derived_bound const& ante);
         bool process_atoms() const;
         unsigned get_num_conflicts() const { return m_num_conflicts; }
         var_kind get_var_kind(theory_var v) const { return m_data[v].kind(); }
@@ -600,9 +595,11 @@ namespace smt {
         void add_row_entry(unsigned r_id, numeral const & coeff, theory_var v);
         uint_set& row_vars();
         class scoped_row_vars;
-        
+
+        void check_app(expr* e, expr* n);
         void internalize_internal_monomial(app * m, unsigned r_id);
         theory_var internalize_add(app * n);
+        theory_var internalize_sub(app * n);
         theory_var internalize_mul_core(app * m);
         theory_var internalize_mul(app * m);
         theory_var internalize_div(app * n);
@@ -852,9 +849,9 @@ namespace smt {
         bool max_min_infeasible_int_vars();
         void patch_int_infeasible_vars();
         void fix_non_base_vars();
-        unsynch_mpq_manager m_es_num_manager; // manager for euclidean solver.
-        struct euclidean_solver_bridge;
-        bool apply_euclidean_solver();
+//        unsynch_mpq_manager m_es_num_manager; // manager for euclidean solver.
+//        struct euclidean_solver_bridge;
+//        bool apply_euclidean_solver();
         final_check_status check_int_feasibility();
 
         // -----------------------------------
@@ -970,20 +967,21 @@ namespace smt {
         /**
            \brief A monomial is 'pure' if does not have a numeric coefficient.
         */
-        bool is_pure_monomial(expr * m) const { return m_util.is_mul(m) && !m_util.is_numeral(to_app(m)->get_arg(0)); }
-        bool is_pure_monomial(theory_var v) const { return is_pure_monomial(get_enode(v)->get_owner()); }
+        bool is_pure_monomial(expr * m) const;
+        bool is_pure_monomial(theory_var v) const { return is_pure_monomial(get_enode(v)->get_expr()); }
         void mark_var(theory_var v, svector<theory_var> & vars, var_set & already_found);
         void mark_dependents(theory_var v, svector<theory_var> & vars, var_set & already_found, row_set & already_visited_rows);
         void get_non_linear_cluster(svector<theory_var> & vars);
-        std::pair<unsigned, int> analyze_monomial(expr * m) const;
-        expr * get_monomial_body(expr * m) const;
-        rational get_monomial_coeff(expr * m) const;
-        unsigned get_num_vars_in_monomial(expr * m) const;
+
         typedef std::pair<expr *, unsigned> var_power_pair;
-        var_power_pair get_var_and_degree(expr * m, unsigned i) const;
+        typedef std::pair<unsigned, var_power_pair> n_var_power_pair;
+        n_var_power_pair analyze_monomial(expr * m) const;
+        
+        rational decompose_monomial(expr* m, buffer<var_power_pair>& vp) const;
+
         void display_monomial(std::ostream & out, expr * m) const;
         bool propagate_nl_upward(expr * m);
-        bool propagate_nl_downward(expr * m, unsigned i);
+        bool propagate_nl_downward(expr * m, var_power_pair const& p);
         interval mk_interval_for(theory_var v);
         interval mk_interval_for(expr * n);
         void mul_bound_of(expr * var, unsigned power, interval & target);
@@ -993,26 +991,25 @@ namespace smt {
         bool update_bounds_using_interval(theory_var v, interval const & i);
         bool update_bounds_using_interval(expr * n, interval const & i);
         bool propagate_nl_bounds(expr * m);
-        bool propagate_nl_bound(expr * m, int i);
         bool propagate_nl_bounds();
         bool is_problematic_non_linear_row(row const & r);
         bool is_mixed_real_integer(row const & r) const;
         bool is_integer(row const & r) const;
         typedef std::pair<rational, expr *> coeff_expr; 
-        void get_polynomial_info(sbuffer<coeff_expr> const & p, sbuffer<var_num_occs> & vars);
-        expr * p2expr(sbuffer<coeff_expr> & p);
+        bool get_polynomial_info(buffer<coeff_expr> const & p, sbuffer<var_num_occs> & vars);
+        expr_ref p2expr(buffer<coeff_expr> & p);
         expr * power(expr * var, unsigned power);
         expr * mk_nary_mul(unsigned sz, expr * const * args, bool is_int);
         expr * mk_nary_add(unsigned sz, expr * const * args, bool is_int);
         expr * mk_nary_add(unsigned sz, expr * const * args);
         void display_nested_form(std::ostream & out, expr * p);
         unsigned get_degree_of(expr * m, expr * var);
-        unsigned get_min_degree(sbuffer<coeff_expr> & p, expr * var);
+        unsigned get_min_degree(buffer<coeff_expr> & p, expr * var);
         expr * factor(expr * m, expr * var, unsigned d);
-        bool in_monovariate_monomials(sbuffer<coeff_expr> & p, expr * var, unsigned & i1, rational & c1, unsigned & n1, unsigned & i2, rational & c2, unsigned & n2);
-        expr * horner(sbuffer<coeff_expr> & p, expr * var);
-        expr * cross_nested(sbuffer<coeff_expr> & p, expr * var);
-        bool is_cross_nested_consistent(sbuffer<coeff_expr> & p);
+        bool in_monovariate_monomials(buffer<coeff_expr> & p, expr * var, unsigned & i1, rational & c1, unsigned & n1, unsigned & i2, rational & c2, unsigned & n2);
+        expr_ref horner(unsigned depth, buffer<coeff_expr> & p, expr * var);
+        expr_ref cross_nested(unsigned depth, buffer<coeff_expr> & p, expr * var);
+        bool is_cross_nested_consistent(buffer<coeff_expr> & p);
         bool is_cross_nested_consistent(row const & r);
         bool is_cross_nested_consistent(svector<theory_var> const & nl_cluster);
         rational get_value(theory_var v, bool & computed_epsilon);
@@ -1039,6 +1036,13 @@ namespace smt {
         bool internalize_gb_eq(grobner::equation const * eq);
         enum gb_result { GB_PROGRESS, GB_NEW_EQ, GB_FAIL };
         gb_result compute_grobner(svector<theory_var> const & nl_cluster);
+        bool compute_basis_loop(grobner & gb);
+        void compute_basis(grobner&, bool&);
+        void update_statistics(grobner&);
+        void set_gb_exhausted();
+        bool get_gb_eqs_and_look_for_conflict(ptr_vector<grobner::equation>& eqs, grobner&);
+        bool scan_for_linear(ptr_vector<grobner::equation>& eqs, grobner&);
+        bool try_to_modify_eqs(ptr_vector<grobner::equation>& eqs, grobner&, unsigned &);
         bool max_min_nl_vars();
         final_check_status process_non_linear();
         
@@ -1049,12 +1053,14 @@ namespace smt {
         //
         // -----------------------------------
     public:
-        theory_arith(ast_manager & m, theory_arith_params & params);
+        theory_arith(context& ctx);
         ~theory_arith() override;
         
         theory * mk_fresh(context * new_ctx) override;
 
         void setup() override;
+
+        lbool get_phase(bool_var v) override;
 
         char const * get_name() const override { return "arithmetic"; }
 
@@ -1139,7 +1145,7 @@ namespace smt {
         void display_bounds_in_smtlib(std::ostream & out) const;
         void display_bounds_in_smtlib() const;
         void display_nl_monomials(std::ostream & out) const;
-        void display_coeff_exprs(std::ostream & out, sbuffer<coeff_expr> const & p) const;
+        void display_coeff_exprs(std::ostream & out, buffer<coeff_expr> const & p) const;
         void display_interval(std::ostream& out, interval const& i);
         void display_deps(std::ostream& out, v_dependency* dep);
 
@@ -1276,5 +1282,4 @@ namespace smt {
     
 };
 
-#endif /* THEORY_ARITH_H_ */
 

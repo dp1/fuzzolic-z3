@@ -73,8 +73,9 @@ bool lackr::mk_ackermann(/*out*/goal_ref& g, double lemmas_upper_bound) {
     if (!init())
         return false;
     if (lemmas_upper_bound != std::numeric_limits<double>::infinity() &&
-        ackr_helper::calculate_lemma_bound(m_fun2terms, m_sel2terms) > lemmas_upper_bound) 
+        ackr_helper::calculate_lemma_bound(m_fun2terms, m_sel2terms) > lemmas_upper_bound) {
         return false;
+    }
     eager_enc();
     for (expr* a : m_abstr) 
         g->assert_expr(a);
@@ -174,12 +175,12 @@ void lackr::abstract_fun(fun2terms_map const& apps) {
     for (auto const& kv : apps) {
         func_decl* fd = kv.m_key;
         for (app * t : kv.m_value->var_args) {
-            app * fc = m.mk_fresh_const(fd->get_name(), m.get_sort(t));
+            app * fc = m.mk_fresh_const(fd->get_name(), t->get_sort());
             SASSERT(t->get_decl() == fd);
             m_info->set_abstr(t, fc);
         }
         for (app * t : kv.m_value->const_args) {
-            app * fc = m.mk_fresh_const(fd->get_name(), m.get_sort(t));
+            app * fc = m.mk_fresh_const(fd->get_name(), t->get_sort());
             SASSERT(t->get_decl() == fd);
             m_info->set_abstr(t, fc);
         }
@@ -191,11 +192,11 @@ void lackr::abstract_sel(sel2terms_map const& apps) {
     for (auto const& kv : apps) {
         func_decl * fd = kv.m_key->get_decl();
         for (app * t : kv.m_value->const_args) {
-            app * fc = m.mk_fresh_const(fd->get_name(), m.get_sort(t));
+            app * fc = m.mk_fresh_const(fd->get_name(), t->get_sort());
             m_info->set_abstr(t, fc);
         }
         for (app * t : kv.m_value->var_args) {
-            app * fc = m.mk_fresh_const(fd->get_name(), m.get_sort(t));
+            app * fc = m.mk_fresh_const(fd->get_name(), t->get_sort());
             m_info->set_abstr(t, fc);
         }
     }
@@ -271,6 +272,7 @@ lbool lackr::lazy() {
 bool lackr::collect_terms() {
     ptr_vector<expr> stack = m_formulas;
     expr_mark        visited;
+    func_decl* f;
 
     while (!stack.empty()) {
         expr * curr = stack.back();
@@ -291,6 +293,10 @@ bool lackr::collect_terms() {
                     m_ackr_helper.mark_non_select(a, m_non_select);
                     add_term(a);
                 }                
+                if (m_autil.is_as_array(curr, f))
+                    m_non_funs.mark(f, true);
+                if (m_autil.is_map(curr))
+                    m_non_funs.mark(m_autil.get_map_func_decl(curr), true);
                 break;
             }
             case AST_QUANTIFIER:
@@ -302,6 +308,7 @@ bool lackr::collect_terms() {
     }
 
     m_ackr_helper.prune_non_select(m_sel2terms, m_non_select);
+    m_ackr_helper.prune_non_funs(m_fun2terms, m_non_funs);
     
     return true;
 }

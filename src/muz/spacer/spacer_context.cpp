@@ -20,64 +20,68 @@ Notes:
 
 --*/
 
+// clang-format off
 
 #include <sstream>
 #include <iomanip>
 
-#include "muz/base/dl_util.h"
+#include "util/util.h"
+#include "util/timeit.h"
+#include "util/luby.h"
 #include "ast/rewriter/rewriter.h"
 #include "ast/rewriter/rewriter_def.h"
 #include "ast/rewriter/var_subst.h"
-#include "util/util.h"
-#include "muz/spacer/spacer_prop_solver.h"
-#include "muz/spacer/spacer_context.h"
-#include "muz/spacer/spacer_generalizers.h"
-#include "ast/for_each_expr.h"
-#include "muz/base/dl_rule_set.h"
-#include "smt/tactic/unit_subsumption_tactic.h"
-#include "model/model_smt2_pp.h"
-#include "muz/transforms/dl_mk_rule_inliner.h"
 #include "ast/ast_smt2_pp.h"
 #include "ast/ast_ll_pp.h"
 #include "ast/ast_util.h"
 #include "ast/proofs/proof_checker.h"
-#include "smt/smt_value_sort.h"
+#include "ast/for_each_expr.h"
 #include "ast/scoped_proof.h"
-#include "muz/spacer/spacer_qe_project.h"
-#include "tactic/core/blast_term_ite_tactic.h"
-
-#include "util/timeit.h"
-#include "util/luby.h"
 #include "ast/rewriter/expr_safe_replace.h"
 #include "ast/expr_abstract.h"
-
+#include "model/model_smt2_pp.h"
+#include "tactic/core/blast_term_ite_tactic.h"
+#include "smt/tactic/unit_subsumption_tactic.h"
+#include "smt/smt_value_sort.h"
 #include "smt/smt_solver.h"
-
+#include "muz/base/dl_util.h"
+#include "muz/spacer/spacer_prop_solver.h"
+#include "muz/spacer/spacer_context.h"
+#include "muz/spacer/spacer_generalizers.h"
+#include "muz/base/dl_rule_set.h"
+#include "muz/transforms/dl_mk_rule_inliner.h"
+#include "muz/spacer/spacer_qe_project.h"
 #include "muz/spacer/spacer_sat_answer.h"
+#include "muz/spacer/spacer_concretize.h"
+#include "muz/spacer/spacer_global_generalizer.h"
 
 #define WEAKNESS_MAX 65535
 
 namespace spacer {
 
 /// pob -- proof obligation
-pob::pob (pob* parent, pred_transformer& pt,
-          unsigned level, unsigned depth, bool add_to_parent):
-    m_ref_count (0),
-    m_parent (parent), m_pt (pt),
-    m_post (m_pt.get_ast_manager ()),
-    m_binding(m_pt.get_ast_manager()),
-    m_new_post (m_pt.get_ast_manager ()),
-    m_level (level), m_depth (depth),
-    m_open (true), m_use_farkas (true), m_in_queue(false),
-    m_weakness(0), m_blocked_lvl(0) {
+pob::pob(pob *parent, pred_transformer &pt, unsigned level, unsigned depth,
+         bool add_to_parent)
+    : m_ref_count(0), m_parent(parent), m_pt(pt),
+      m_post(m_pt.get_ast_manager()), m_binding(m_pt.get_ast_manager()),
+      m_new_post(m_pt.get_ast_manager()), m_level(level), m_depth(depth),
+      m_desired_level(0), m_open(true), m_use_farkas(true), m_in_queue(false), m_is_conjecture(false),
+      m_enable_local_gen(true), m_enable_concretize(false), m_is_subsume(false),
+      m_enable_expand_bnd_gen(false), m_weakness(0), m_blocked_lvl(0),
+      m_concretize_pat(m_pt.get_ast_manager()),
+      m_gas(0) {
     if (add_to_parent && m_parent) {
         m_parent->add_child(*this);
+    }
+    if (m_parent) {
+        m_is_conjecture = m_parent->is_conjecture();
+        // m_is_subsume = m_parent->is_subsume();
+        m_gas = m_parent->get_gas();
     }
 }
 
 void pob::set_post(expr* post) {
-    app_ref_vector empty_binding(get_ast_manager());
-    set_post(post, empty_binding);
+    set_post(post, {get_ast_manager()});
 }
 
 void pob::set_post(expr* post, app_ref_vector const &binding) {
@@ -87,13 +91,18 @@ void pob::set_post(expr* post, app_ref_vector const &binding) {
               m_pt.get_context().use_euf_gen());
 
     m_binding.reset();
-    if (!binding.empty()) {m_binding.append(binding);}
+    m_binding.append(binding);
 }
 
 void pob::inherit(pob const &p) {
     SASSERT(!is_in_queue());
     SASSERT(m_parent == p.m_parent);
     SASSERT(&m_pt == &p.m_pt);
+
+    // -- HACK: normalize second time because th_rewriter is not idempotent
+    if (m_post != p.m_post) {
+      normalize(m_post, m_post, false, false);
+    }
     SASSERT(m_post == p.m_post);
     SASSERT(!m_new_post);
 
@@ -102,27 +111,37 @@ void pob::inherit(pob const &p) {
 
     m_level = p.m_level;
     m_depth = p.m_depth;
+    m_desired_level = std::max(m_desired_level, p.m_desired_level);
     m_open = p.m_open;
     m_use_farkas = p.m_use_farkas;
+
+    m_is_conjecture = p.m_is_conjecture;
+    m_enable_local_gen = p.m_enable_local_gen;
+    m_enable_concretize = p.m_enable_concretize;
+    m_is_subsume = p.m_is_subsume;
+    m_enable_expand_bnd_gen = p.m_enable_expand_bnd_gen;
+
     m_weakness = p.m_weakness;
 
     m_derivation = nullptr;
+
+    m_gas = p.m_gas;
 }
 
 void pob::close () {
-    if (!m_open) { return; }
-
-    m_derivation = nullptr;
-    m_open = false;
-    for (unsigned i = 0, sz = m_kids.size (); i < sz; ++i)
-    { m_kids [i]->close(); }
+    if (m_open) {
+        m_derivation = nullptr;
+        m_open = false;
+        for (auto* k : m_kids)
+            k->close();
+    }
 }
 
 void pob::get_skolems(app_ref_vector &v) {
     for (unsigned i = 0, sz = m_binding.size(); i < sz; ++i) {
         expr* e;
         e = m_binding.get(i);
-        v.push_back (mk_zk_const (get_ast_manager(), i, get_sort(e)));
+        v.push_back (mk_zk_const (get_ast_manager(), i, e->get_sort()));
     }
 }
 
@@ -139,8 +158,7 @@ void pob::get_skolems(app_ref_vector &v) {
 // ----------------
 // pob_queue
 
-pob* pob_queue::top ()
-{
+pob* pob_queue::top() {
     /// nothing in the queue
     if (m_data.empty()) { return nullptr; }
     /// top queue element is above max level
@@ -150,7 +168,7 @@ pob* pob_queue::top ()
         m_data.top()->depth() > m_min_depth) { return nullptr; }
 
     /// there is something good in the queue
-    return m_data.top ();
+    return m_data.top();
 }
 
 void pob_queue::pop() {
@@ -160,16 +178,14 @@ void pob_queue::pop() {
 }
 
 
-void pob_queue::set_root(pob& root)
-{
+void pob_queue::set_root(pob& root) {
     m_root = &root;
     m_max_level = root.level ();
     m_min_depth = root.depth ();
     reset();
 }
 
-void pob_queue::reset()
-{
+void pob_queue::reset() {
     while (!m_data.empty()) {
         pob *p = m_data.top();
         m_data.pop();
@@ -210,54 +226,45 @@ void derivation::add_premise (pred_transformer &pt,
                               unsigned oidx,
                               expr* summary,
                               bool must,
-                              const ptr_vector<app> *aux_vars)
-{m_premises.push_back (premise (pt, oidx, summary, must, aux_vars));}
+                              const ptr_vector<app> *aux_vars) {
+    m_premises.push_back (premise (pt, oidx, summary, must, aux_vars));
+}
 
 
 
 pob *derivation::create_first_child (model &mdl) {
-    if (m_premises.empty()) { return nullptr; }
+    if (m_premises.empty()) 
+        return nullptr; 
     m_active = 0;
     return create_next_child(mdl);
 }
 
-void derivation::exist_skolemize(expr* fml, app_ref_vector &vars, expr_ref &res) {
-    ast_manager &m = get_ast_manager();
-    if (vars.empty()) {res = fml; return;}
-    if (m.is_true(fml) || m.is_false(fml)) {res = fml; return;}
-
-    {
-        std::stable_sort (vars.c_ptr(), vars.c_ptr() + vars.size(), sk_lt_proc());
-        unsigned i, j, end;
-        app_ref v(m);
-        for (i = 1, j = 1, end = vars.size(); i < end; ++i) {
-            if (vars.get(j-1) != vars.get(i)) {
-                v = vars.get(i);   // keep ref
-                vars.set(j++, v);
-            }
-        }
-        vars.shrink(j);
+void derivation::exist_skolemize(expr* fml, app_ref_vector& vars, expr_ref& res) {
+    ast_manager& m = get_ast_manager();
+    if (vars.empty() || m.is_true(fml) || m.is_false(fml)) {
+        res = fml;
+        return;
     }
-
-    TRACE("spacer", tout << "Skolemizing: ";
-          for (auto v : vars) tout << " " << mk_pp(v, m) << " ";
-          tout << "\nfrom " << mk_pp(fml, m) << "\n";
-        );
-
-    app_ref_vector pinned(m);
+    
+    std::stable_sort(vars.data(), vars.data() + vars.size(), sk_lt_proc());
+    unsigned j = 1;
+    for (unsigned i = 1; i < vars.size(); ++i) 
+        if (vars.get(i) != vars.get(j - 1)) 
+            vars[j++] = vars.get(i);
+    vars.shrink(j);
+    
+    TRACE("spacer", tout << "Skolemizing: " << vars << "\n";
+          tout << "from " << mk_pp(fml, m) << "\n";);
 
     expr_safe_replace sub(m);
     for (unsigned i = 0, sz = vars.size(); i < sz; ++i) {
-        expr* e;
-        e = vars.get(i);
-        pinned.push_back (mk_zk_const (m, i, get_sort(e)));
-        sub.insert (e, pinned.back());
+        expr* e = vars.get(i);
+        sub.insert(e, mk_zk_const(m, i, e->get_sort()));
     }
     sub(fml, res);
 }
 
-pob *derivation::create_next_child(model &mdl)
-{
+pob *derivation::create_next_child(model &mdl) {
     timeit _timer (is_trace_enabled("spacer_timeit"),
                    "spacer::derivation::create_next_child",
                    verbose_stream ());
@@ -386,11 +393,9 @@ pob *derivation::create_next_child ()
     reach_fact *rf = pt.get_used_rf (*mdl, true);
 
     // get an implicant of the summary
-    expr_ref_vector u(m), lits(m);
-    u.push_back (rf->get ());
-    compute_implicant_literals (*mdl, u, lits);
-    expr_ref v(m);
-    v = mk_and (lits);
+    expr_ref_vector u(m);
+    u.push_back (rf->get ());    
+    expr_ref v = mk_and (compute_implicant_literals(*mdl, u));
 
     // XXX The summary is not used by anyone after this point
     m_premises[m_active].set_summary (v, true, &(rf->aux_vars ()));
@@ -413,9 +418,10 @@ pob *derivation::create_next_child ()
         m_trans = mk_and (summaries);
 
         // variables to eliminate
-        vars.append (rf->aux_vars ().size (), rf->aux_vars ().c_ptr ());
-        for (unsigned i = 0, sz = pt.head ()->get_arity (); i < sz; ++i)
-        { vars.push_back(m.mk_const(pm.o2n(pt.sig(i), 0))); }
+        vars.append (rf->aux_vars ().size (), rf->aux_vars ().data ());
+        for (unsigned i = 0, sz = pt.head ()->get_arity (); i < sz; ++i) { 
+            vars.push_back(m.mk_const(pm.o2n(pt.sig(i), 0))); 
+        }
 
         if (!vars.empty ()) {
             vars.append(m_evars);
@@ -449,17 +455,14 @@ derivation::premise::premise (pred_transformer &pt, unsigned oidx,
     manager &sm = m_pt.get_manager ();
 
     unsigned sig_sz = m_pt.head ()->get_arity ();
-    for (unsigned i = 0; i < sig_sz; ++i)
-    { m_ovars.push_back(m.mk_const(sm.o2o(pt.sig(i), 0, m_oidx))); }
+    for (unsigned i = 0; i < sig_sz; ++i) { 
+        m_ovars.push_back(m.mk_const(sm.o2o(pt.sig(i), 0, m_oidx))); 
+    }
 
-    if (aux_vars)
-        for (unsigned i = 0, sz = aux_vars->size (); i < sz; ++i)
-        { m_ovars.push_back(m.mk_const(sm.n2o(aux_vars->get(i)->get_decl(), m_oidx))); }
+    if (aux_vars) 
+        for (app* v : *aux_vars) 
+            m_ovars.push_back(m.mk_const(sm.n2o(v->get_decl(), m_oidx))); 
 }
-
-derivation::premise::premise (const derivation::premise &p) :
-    m_pt (p.m_pt), m_oidx (p.m_oidx), m_summary (p.m_summary), m_must (p.m_must),
-    m_ovars (p.m_ovars) {}
 
 /// \brief Updated the summary.
 /// The new summary is over n-variables.
@@ -478,9 +481,8 @@ void derivation::premise::set_summary (expr * summary, bool must,
     { m_ovars.push_back(m.mk_const(sm.o2o(m_pt.sig(i), 0, m_oidx))); }
 
     if (aux_vars)
-        for (unsigned i = 0, sz = aux_vars->size (); i < sz; ++i)
-            m_ovars.push_back (m.mk_const (sm.n2o (aux_vars->get (i)->get_decl (),
-                                                   m_oidx)));
+        for (app* v : *aux_vars)
+            m_ovars.push_back (m.mk_const (sm.n2o (v->get_decl (), m_oidx)));
 }
 
 
@@ -553,25 +555,25 @@ void lemma::mk_expr_core() {
     m_body = ::push_not(m_body);
 
     if (!m_zks.empty() && has_zk_const(m_body)) {
-            app_ref_vector zks(m);
-            zks.append(m_zks);
-            zks.reverse();
-            expr_abstract(m, 0,
-                          zks.size(), (expr* const*)zks.c_ptr(), m_body,
-                          m_body);
-            ptr_buffer<sort> sorts;
-            svector<symbol> names;
-            for (unsigned i=0, sz=zks.size(); i < sz; ++i) {
-                sorts.push_back(get_sort(zks.get(i)));
-                names.push_back(zks.get(i)->get_decl()->get_name());
-            }
-            m_body = m.mk_quantifier(forall_k, zks.size(),
-                                     sorts.c_ptr(),
-                                     names.c_ptr(),
-                                     m_body, 15, symbol(m_body->get_id()));
+        app_ref_vector zks(m);
+        zks.append(m_zks);
+        zks.reverse();
+        m_body = expr_abstract(m, 0,
+                               zks.size(), (expr* const*)zks.data(), m_body);
+        ptr_buffer<sort> sorts;
+        svector<symbol> names;
+        for (app* z : zks) {
+            sorts.push_back(z->get_sort());
+            names.push_back(z->get_decl()->get_name());
+        }
+        m_body = m.mk_quantifier(forall_k, zks.size(),
+                                 sorts.data(),
+                                 names.data(),
+                                 m_body, 15, symbol(m_body->get_id()));
     }
     SASSERT(m_body);
 }
+
 void lemma::mk_cube_core() {
     if (!m_cube.empty()) {return;}
     expr_ref cube(m);
@@ -588,7 +590,7 @@ void lemma::mk_cube_core() {
             m_cube.push_back(m.mk_true());
         }
         else {
-            std::sort(m_cube.c_ptr(), m_cube.c_ptr() + m_cube.size(), ast_lt_proc());
+            std::sort(m_cube.data(), m_cube.data() + m_cube.size(), ast_lt_proc());
         }
     }
     else {
@@ -689,7 +691,7 @@ void lemma::mk_insts(expr_ref_vector &out, expr* e)
     unsigned num_decls = to_quantifier(lem)->get_num_decls();
     expr_ref inst(m);
     for (unsigned off = 0, sz = m_bindings.size(); off < sz; off += num_decls) {
-        instantiate((expr * const *) m_bindings.c_ptr() + off, inst, e);
+        instantiate((expr * const *) m_bindings.data() + off, inst, e);
         out.push_back(inst);
         inst.reset();
     }
@@ -718,7 +720,7 @@ pred_transformer::pred_transformer(context& ctx, manager& pm, func_decl* head):
     m_reach_facts(), m_rf_init_sz(0),
     m_transition_clause(m), m_transition(m), m_init(m),
     m_extend_lit0(m), m_extend_lit(m),
-    m_all_init(false)
+    m_all_init(false), m_has_quantified_frame(false)
 {
     m_solver = alloc(prop_solver, m, ctx.mk_solver0(), ctx.mk_solver1(),
                      ctx.get_params(), head->get_name());
@@ -732,7 +734,7 @@ app_ref pred_transformer::mk_extend_lit() {
     app_ref v(m);
     std::stringstream name;
     name << m_head->get_name () << "_ext0";
-    v = m.mk_const (symbol(name.str().c_str()), m.mk_bool_sort());
+    v = m.mk_const (symbol(name.str()), m.mk_bool_sort());
     return app_ref(m.mk_not (m.mk_const (pm.get_n_pred (v->get_decl ()))), m);
 }
 
@@ -776,6 +778,8 @@ void pred_transformer::collect_statistics(statistics& st) const
                m_must_reachable_watch.get_seconds ());
     st.update("time.spacer.ctp", m_ctp_watch.get_seconds());
     st.update("time.spacer.mbp", m_mbp_watch.get_seconds());
+    // -- Max cluster size can decrease during run
+    st.update("SPACER max cluster size", m_cluster_db.get_max_cluster_size());
 }
 
 void pred_transformer::reset_statistics()
@@ -796,14 +800,15 @@ void pred_transformer::init_sig()
         std::stringstream name_stm;
         name_stm << m_head->get_name() << '_' << i;
         func_decl_ref stm(m);
-        stm = m.mk_func_decl(symbol(name_stm.str().c_str()), 0, (sort*const*)nullptr, arg_sort);
+        stm = m.mk_func_decl(symbol(name_stm.str()), 0, (sort*const*)nullptr, arg_sort);
         m_sig.push_back(pm.get_o_pred(stm, 0));
     }
 }
 
 void pred_transformer::ensure_level(unsigned level)
 {
-    if (is_infty_level(level)) { return; }
+    if (is_infty_level(level)) 
+        return; 
 
     while (m_frames.size() <= level) {
         m_frames.add_frame ();
@@ -817,7 +822,8 @@ bool pred_transformer::is_must_reachable(expr* state, model_ref* model)
     SASSERT (state);
     // XXX This seems to mis-handle the case when state is
     // reachable using the init rule of the current transformer
-    if (m_reach_facts.empty()) { return false; }
+    if (m_reach_facts.empty()) 
+        return false;     
 
     m_reach_solver->push ();
     m_reach_solver->assert_expr (state);
@@ -854,6 +860,29 @@ reach_fact *pred_transformer::get_used_origin_rf(model& mdl, unsigned oidx) {
     return nullptr;
 }
 
+// get all reachable facts used in the model.
+void pred_transformer::get_all_used_rf(model &mdl, unsigned oidx,
+                                       reach_fact_ref_vector &res) {
+    expr_ref b(m);
+    res.reset();
+    model::scoped_model_completion _sc_(mdl, false);
+    for (auto *rf : m_reach_facts) {
+        pm.formula_n2o(rf->tag(), b, oidx);
+        if (mdl.is_false(b))
+            res.push_back(rf);
+    }
+}
+
+// get all reachable facts in the post state
+void pred_transformer::get_all_used_rf(model &mdl, reach_fact_ref_vector &res) {
+    res.reset();
+    model::scoped_model_completion _sc_(mdl, false);
+    for (auto *rf : m_reach_facts) {
+        if (mdl.is_false(rf->tag()))
+            res.push_back(rf);
+    }
+}
+
 const datalog::rule *pred_transformer::find_rule(model &model) {
     expr_ref val(m);
 
@@ -868,7 +897,7 @@ const datalog::rule *pred_transformer::find_rule(model &model) {
 
 const datalog::rule *pred_transformer::find_rule(model &model,
                                                  bool& is_concrete,
-                                                 vector<bool>& reach_pred_used,
+                                                 bool_vector& reach_pred_used,
                                                  unsigned& num_reuse_reach)
 {
     // find a rule whose tag is true in the model;
@@ -940,28 +969,12 @@ void pred_transformer::add_lemma_core(lemma* lemma, bool ground_only)
     SASSERT(!lemma->is_background());
     unsigned lvl = lemma->level();
     expr* l = lemma->get_expr();
-    SASSERT(!lemma->is_ground() || is_clause(m, l));
-    SASSERT(!is_quantifier(l) || is_clause(m, to_quantifier(l)->get_expr()));
+    CTRACE("spacer", !spacer::is_clause(m, l),
+           tout << "Lemma not a clause: " << mk_pp(l, m) << "\n";);
+    SASSERT(!lemma->is_ground() || spacer::is_clause(m, l));
+    SASSERT(!is_quantifier(l) || spacer::is_clause(m, to_quantifier(l)->get_expr()));
 
-    TRACE("spacer", tout << "add-lemma-core: " << pp_level (lvl)
-          << " " << head ()->get_name ()
-          << " " << mk_pp (l, m) << "\n";);
-
-    TRACE("core_array_eq", tout << "add-lemma-core: " << pp_level (lvl)
-          << " " << head ()->get_name ()
-          << " " << mk_pp (l, m) << "\n";);
-
-    STRACE ("spacer_progress",
-            tout << "** add-lemma: " << pp_level (lvl) << " "
-            << head ()->get_name () << " "
-            << mk_epp (l, m) << "\n";
-
-            if (!lemma->is_ground()) {
-                tout << "Bindings: " << lemma->get_bindings() << "\n";
-            }
-            tout << "\n";
-        );
-
+    get_context().log_add_lemma(*this, *lemma);
 
     if (is_infty_level(lvl)) { m_stats.m_num_invariants++; }
 
@@ -1008,6 +1021,7 @@ void pred_transformer::add_lemma_from_child (pred_transformer& child,
             inst.set(j, m.mk_implies(a, inst.get(j)));
         }
         if (lemma->is_ground() || (get_context().use_qlemmas() && !ground_only)) {
+            m_has_quantified_frame = true;
             inst.push_back(fmls.get(i));
         }
         SASSERT (!inst.empty ());
@@ -1031,24 +1045,24 @@ app_ref pred_transformer::mk_fresh_rf_tag ()
     func_decl_ref decl(m);
 
     name << head ()->get_name () << "#reach_tag_" << m_reach_facts.size ();
-    decl = m.mk_func_decl (symbol (name.str ().c_str ()), 0,
+    decl = m.mk_func_decl (symbol(name.str()), 0,
                            (sort*const*)nullptr, m.mk_bool_sort ());
     return app_ref(m.mk_const (pm.get_n_pred (decl)), m);
 }
 
-void pred_transformer::add_rf (reach_fact *rf)
+void pred_transformer::add_rf (reach_fact *rf, bool force)
 {
     timeit _timer (is_trace_enabled("spacer_timeit"),
                    "spacer::pred_transformer::add_rf",
                    verbose_stream ());
 
-    TRACE ("spacer",
-           tout << "add_rf: " << head()->get_name() << " "
-           << (rf->is_init () ? "INIT " : "")
-           << mk_pp(rf->get (), m) << "\n";);
+    if (!rf) return;
+    TRACE("spacer", tout << "add_rf: " << head()->get_name() << " "
+                         << (rf->is_init() ? "INIT " : "")
+                         << mk_pp(rf->get(), m) << "\n";);
 
-    // -- avoid duplicates
-    if (!rf || get_rf(rf->get())) {return;}
+    // -- avoid duplicates unless forced
+    if (!force && get_rf(rf->get())) {return;}
 
     // all initial facts are grouped together
     SASSERT (!rf->is_init () || m_reach_facts.empty () ||
@@ -1110,7 +1124,7 @@ expr_ref pred_transformer::get_reachable()
             const ptr_vector<app> &aux = f->aux_vars();
             if (!aux.empty()) {
                 // -- existentially quantify auxiliary variables
-                r = mk_exists (m, aux.size(), aux.c_ptr(), r);
+                r = mk_exists (m, aux.size(), aux.data(), r);
                 // XXX not sure how this interacts with variable renaming later on.
                 // XXX For now, simply dissallow existentially quantified auxiliaries
                 NOT_IMPLEMENTED_YET();
@@ -1142,20 +1156,13 @@ expr_ref pred_transformer::get_cover_delta(func_decl* p_orig, int level)
         v = m.mk_var(i, sig(i)->get_range());
         sub.insert(c, v);
     }
-    scoped_ptr<expr_replacer> rep = mk_default_expr_replacer(m);
+    scoped_ptr<expr_replacer> rep = mk_default_expr_replacer(m, false);
     rep->set_substitution(&sub);
     (*rep)(result);
 
     // adjust result according to model converter.
-    unsigned arity = m_head->get_arity();
     model_ref md = alloc(model, m);
-    if (arity == 0) {
-        md->register_decl(m_head, result);
-    } else {
-        func_interp* fi = alloc(func_interp, m, arity);
-        fi->set_else(result);
-        md->register_decl(m_head, fi);
-    }
+    md->register_decl(m_head, result);    
     model_converter_ref mc = ctx.get_model_converter();
     apply(mc, md);
     if (p_orig->get_arity() == 0) {
@@ -1206,18 +1213,17 @@ expr_ref pred_transformer::get_origin_summary (model &mdl,
     // (skip quantified lemmas cause we can't validate them in the model)
     // TBD: for quantified lemmas use current instances
     flatten_and(summary);
-    for (auto *s : summary) {
+
+    for (auto* s : summary) {
         if (!is_quantifier(s) && !mdl.is_true(s)) {
-            TRACE("spacer", tout << "Summary not true in the model: "
-                  << mk_pp(s, m) << "\n";);
-            // return expr_ref(m);
+            TRACE("spacer", tout << "Summary not true in the model: " << mk_pp(s, m) << "\n";);
+            return expr_ref(m);
         }
     }
-
+    
     // -- pick an implicant
-    expr_ref_vector lits(m);
-    compute_implicant_literals (mdl, summary, lits);
-    return mk_and(lits);
+    
+    return mk_and(compute_implicant_literals(mdl, summary));
 }
 
 
@@ -1227,14 +1233,12 @@ void pred_transformer::add_cover(unsigned level, expr* property, bool bg)
     // replace bound variables by local constants.
     expr_ref result(property, m), v(m), c(m);
     expr_substitution sub(m);
-    proof_ref pr(m);
-    pr = m.mk_asserted(m.mk_true());
     for (unsigned i = 0; i < sig_size(); ++i) {
         c = m.mk_const(pm.o2n(sig(i), 0));
         v = m.mk_var(i, sig(i)->get_range());
-        sub.insert(v, c, pr);
+        sub.insert(v, c);
     }
-    scoped_ptr<expr_replacer> rep = mk_default_expr_replacer(m);
+    scoped_ptr<expr_replacer> rep = mk_default_expr_replacer(m, false);
     rep->set_substitution(&sub);
     (*rep)(result);
     TRACE("spacer", tout << "cover:\n" << mk_pp(result, m) << "\n";);
@@ -1242,13 +1246,14 @@ void pred_transformer::add_cover(unsigned level, expr* property, bool bg)
     // add the property.
     expr_ref_vector lemmas(m);
     flatten_and(result, lemmas);
-    for (unsigned i = 0, sz = lemmas.size(); i < sz; ++i) {
-        add_lemma(lemmas.get(i), level, bg);
+    for (expr * f: lemmas) {
+        add_lemma(f, level, bg);
     }
 }
 
-void pred_transformer::propagate_to_infinity (unsigned level)
-{m_frames.propagate_to_infinity (level);}
+void pred_transformer::propagate_to_infinity (unsigned level) {
+    m_frames.propagate_to_infinity (level);
+}
 
 // compute a conjunction of all background facts
 void pred_transformer::get_pred_bg_invs(expr_ref_vector& out) {
@@ -1278,12 +1283,11 @@ void pred_transformer::get_pred_bg_invs(expr_ref_vector& out) {
 
 
 /// \brief Returns true if the obligation is already blocked by current lemmas
-bool pred_transformer::is_blocked (pob &n, unsigned &uses_level)
-{
+bool pred_transformer::is_blocked(pob &n, unsigned &uses_level, model_ref *model) {
     ensure_level (n.level ());
     prop_solver::scoped_level _sl (*m_solver, n.level ());
     m_solver->set_core (nullptr);
-    m_solver->set_model (nullptr);
+    m_solver->set_model(model);
 
     expr_ref_vector post(m), _aux(m);
     post.push_back (n.post ());
@@ -1292,7 +1296,9 @@ bool pred_transformer::is_blocked (pob &n, unsigned &uses_level)
     // XXX quic3: not all lemmas are asserted at the post-condition
     lbool res = m_solver->check_assumptions (post, _aux, _aux,
                                             0, nullptr, 0);
-    if (res == l_false) { uses_level = m_solver->uses_level(); }
+    if (res == l_false) { 
+        uses_level = m_solver->uses_level(); 
+    }
     return res == l_false;
 }
 
@@ -1316,10 +1322,9 @@ bool pred_transformer::is_qblocked (pob &n) {
 
     // assert all lemmas
     bool has_quant = false;
-    for (unsigned i = 0, sz = frame_lemmas.size (); i < sz; ++i)
-    {
-        has_quant = has_quant || is_quantifier(frame_lemmas.get(i));
-        s->assert_expr(frame_lemmas.get(i));
+    for (expr* f : frame_lemmas) {
+        has_quant |= is_quantifier(f);
+        s->assert_expr(f);
     }
     if (!has_quant) return false;
 
@@ -1353,8 +1358,8 @@ void pred_transformer::mbp(app_ref_vector &vars, expr_ref &fml, model &mdl,
 lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
                                      model_ref* model, unsigned& uses_level,
                                      bool& is_concrete, datalog::rule const*& r,
-                                     vector<bool>& reach_pred_used,
-                                     unsigned& num_reuse_reach)
+                                     bool_vector& reach_pred_used,
+                                     unsigned& num_reuse_reach, bool use_iuc)
 {
     TRACE("spacer",
           tout << "is-reachable: " << head()->get_name() << " level: "
@@ -1368,7 +1373,8 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
 
     // prepare the solver
     prop_solver::scoped_level _sl(*m_solver, n.level());
-    prop_solver::scoped_subset_core _sc (*m_solver, !n.use_farkas_generalizer ());
+    prop_solver::scoped_subset_core _sc(
+        *m_solver, !(use_iuc && n.use_farkas_generalizer()));
     prop_solver::scoped_weakness _sw(*m_solver, 0,
                                      ctx.weak_abs() ? n.weakness() : UINT_MAX);
     m_solver->set_core(core);
@@ -1406,14 +1412,8 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
         }
     }
 
-    TRACE ("spacer",
-           if (!reach_assumps.empty ()) {
-               tout << "reach assumptions\n";
-               for (unsigned i = 0; i < reach_assumps.size (); i++) {
-                   tout << mk_pp (reach_assumps.get (i), m) << "\n";
-               }
-           }
-        );
+    CTRACE("spacer", !reach_assumps.empty(),
+        tout << "reach assumptions\n" << reach_assumps << "\n";);
 
     // check local reachability;
     // result is either sat (with some reach assumps) or
@@ -1422,24 +1422,20 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
     lbool is_sat = m_solver->check_assumptions (post, reach_assumps,
                                                m_transition_clause, 1, &bg, 0);
 
-    TRACE ("spacer",
-           if (!reach_assumps.empty ()) {
-               tout << "reach assumptions used\n";
-               for (unsigned i = 0; i < reach_assumps.size (); i++) {
-                   tout << mk_pp (reach_assumps.get (i), m) << "\n";
-               }
-           }
-        );
+    CTRACE("spacer", !reach_assumps.empty(),
+        tout << "reach assumptions\n" << reach_assumps << "\n";);
 
     if (is_sat == l_true || is_sat == l_undef) {
         if (core) { core->reset(); }
         if (model && model->get()) {
             r = find_rule(**model, is_concrete, reach_pred_used, num_reuse_reach);
-            TRACE ("spacer", tout << "reachable "
-                   << "is_concrete " << is_concrete << " rused: ";
-                   for (unsigned i = 0, sz = reach_pred_used.size (); i < sz; ++i)
-                       tout << reach_pred_used [i];
+            TRACE("spacer", 
+                  tout << "reachable is_sat: " << is_sat << " "
+                  << r << " is_concrete " << is_concrete << " rused: " << reach_pred_used << "\n";);
+            CTRACE("spacer", r,
+                   ctx.get_datalog_context().get_rule_manager().display_smt2(*r, tout);
                    tout << "\n";);
+            TRACE("spacer_sat", tout << "model is:\n" << **model << "\n";);
         }
 
         return is_sat;
@@ -1447,13 +1443,7 @@ lbool pred_transformer::is_reachable(pob& n, expr_ref_vector* core,
     if (is_sat == l_false) {
         SASSERT (reach_assumps.empty ());
         TRACE ("spacer", tout << "unreachable with lemmas\n";
-               if (core) {
-                   tout << "Core:\n";
-                   for (unsigned i = 0; i < core->size (); i++) {
-                       tout << mk_pp (core->get(i), m) << "\n";
-                   }
-               }
-            );
+               if (core) tout << "Core:\n" << *core << "\n";);
         uses_level = m_solver->uses_level();
         return l_false;
     }
@@ -1539,7 +1529,7 @@ bool pred_transformer::is_invariant(unsigned level, lemma* lem,
     if (ctx.use_bg_invs()) get_pred_bg_invs(conj);
 
     lbool r = m_solver->check_assumptions (cand, aux, m_transition_clause,
-                                           conj.size(), conj.c_ptr(), 1);
+                                           conj.size(), conj.data(), 1);
     if (r == l_false) {
         solver_level = m_solver->uses_level ();
         lem->reset_ctp();
@@ -1574,7 +1564,7 @@ bool pred_transformer::check_inductive(unsigned level, expr_ref_vector& state,
     conj.push_back (m_extend_lit);
     lbool res = m_solver->check_assumptions (state, aux,
                                             m_transition_clause,
-                                            conj.size (), conj.c_ptr (), 1);
+                                            conj.size (), conj.data (), 1);
     if (res == l_false) {
         state.reset();
         state.append(core);
@@ -1660,7 +1650,7 @@ void pred_transformer::init_rules(decl2rel const& pts) {
         for (auto &kv : m_pt_rules) {
             pt_rule &r = *kv.m_value;
             std::string name = head()->get_name().str() + "__tr" + std::to_string(i);
-            tag = m.mk_const(symbol(name.c_str()), m.mk_bool_sort());
+            tag = m.mk_const(symbol(name), m.mk_bool_sort());
             m_pt_rules.set_tag(tag, r);
             m_transition_clause.push_back(tag);
             transitions.push_back(m.mk_implies(r.tag(), r.trans()));
@@ -1680,12 +1670,12 @@ void pred_transformer::init_rules(decl2rel const& pts) {
     if (not_inits.empty ()) {m_all_init = true;}
 }
 
-#ifdef Z3DEBUG
-static bool is_all_non_null(app_ref_vector const& apps) {
-    for (auto *a : apps) if (!a) return false;
-    return true;
-}
-#endif
+// #ifdef Z3DEBUG
+// static bool is_all_non_null(app_ref_vector const& apps) {
+//     for (auto *a : apps) if (!a) return false;
+//     return true;
+// }
+// #endif
 
 void pred_transformer::init_rule(decl2rel const& pts, datalog::rule const& rule) {
     scoped_watch _t_(m_initialize_watch);
@@ -1716,9 +1706,9 @@ void pred_transformer::init_rule(decl2rel const& pts, datalog::rule const& rule)
         trans= mk_and (tail);
 
         ground_free_vars(trans, var_reprs, aux_vars, ut_size == 0);
-        SASSERT(is_all_non_null(var_reprs));
+       // SASSERT(is_all_non_null(var_reprs));
 
-        expr_ref tmp = var_subst(m, false)(trans, var_reprs.size (), (expr*const*)var_reprs.c_ptr());
+        expr_ref tmp = var_subst(m, false)(trans, var_reprs.size (), (expr*const*)var_reprs.data());
         flatten_and (tmp, side);
         trans = mk_and(side);
         side.reset ();
@@ -1733,8 +1723,17 @@ void pred_transformer::init_rule(decl2rel const& pts, datalog::rule const& rule)
     }
     TRACE("spacer_init_rule", tout << mk_pp(trans, m) << "\n";);
 
-    // allow quantifiers in init rule
-    SASSERT(ut_size == 0 || is_ground(trans));
+    // no (universal) quantifiers in recursive rules
+    CTRACE("spacer", ut_size > 0 && !is_ground(trans),
+           tout << "Warning: quantifier in recursive rule: " << trans << "\n";);
+
+    if (ut_size > 0 && !is_ground(trans)) {
+        std::stringstream stm;
+        stm << "spacer: quantifier in a recursive rule:\n";
+        rule.display(get_context().get_datalog_context(), stm);
+        throw default_exception(stm.str());
+    }
+
     if (!m.is_false(trans)) {
         pt_rule &ptr = m_pt_rules.mk_rule(m, rule);
         ptr.set_trans(trans);
@@ -1846,7 +1845,8 @@ app* pred_transformer::extend_initial (expr *e)
     app_ref v(m);
     std::stringstream name;
     name << m_head->get_name() << "_ext";
-    v = m.mk_fresh_const (name.str ().c_str (),
+    auto str = name.str ();
+    v = m.mk_fresh_const (str.c_str(),
                           m.mk_bool_sort ());
     v = m.mk_const (pm.get_n_pred (v->get_decl ()));
 
@@ -1896,8 +1896,10 @@ void pred_transformer::updt_solver(prop_solver *solver) {
         }
 
         // (quantified) lemma
-        if (u->is_ground() || get_context().use_qlemmas())
+        if (u->is_ground() || get_context().use_qlemmas()) {
+            m_has_quantified_frame = true;
             fmls.push_back(u->get_expr());
+        }
 
         // send to solver
         if (is_infty_level(u->level()))
@@ -2092,7 +2094,7 @@ void pred_transformer::frames::sort ()
     if (m_sorted) { return; }
 
     m_sorted = true;
-    std::sort(m_lemmas.c_ptr(), m_lemmas.c_ptr() + m_lemmas.size (), m_lt);
+    std::sort(m_lemmas.data(), m_lemmas.data() + m_lemmas.size (), m_lt);
 }
 
 bool pred_transformer::frames::propagate_to_next_level (unsigned level)
@@ -2296,26 +2298,46 @@ context::context(fp_params const& params, ast_manager& m) :
     m_last_result(l_undef),
     m_inductive_lvl(0),
     m_expanded_lvl(0),
-    m_json_marshaller(this) {
+    m_global_gen(nullptr),
+    m_expand_bnd_gen(nullptr),
+    m_trace_stream(nullptr) {
+
+    params_ref p;
+    p.set_uint("arith.solver", params.spacer_arith_solver());
+
     ref<solver> pool0_base =
-        mk_smt_solver(m, params_ref::get_empty(), symbol::null);
+        mk_smt_solver(m, p, params.spacer_logic());
     ref<solver> pool1_base =
-        mk_smt_solver(m, params_ref::get_empty(), symbol::null);
+        mk_smt_solver(m, p, params.spacer_logic());
     ref<solver> pool2_base =
-        mk_smt_solver(m, params_ref::get_empty(), symbol::null);
+        mk_smt_solver(m, p, params.spacer_logic());
 
     unsigned max_num_contexts = params.spacer_max_num_contexts();
     m_pool0 = alloc(solver_pool, pool0_base.get(), max_num_contexts);
     m_pool1 = alloc(solver_pool, pool1_base.get(), max_num_contexts);
     m_pool2 = alloc(solver_pool, pool2_base.get(), max_num_contexts);
 
+    m_lmma_cluster = alloc(lemma_cluster_finder, m);
     updt_params();
+
+    if (m_params.spacer_trace_file().is_non_empty_string()) {
+        m_trace_stream = alloc(std::fstream,
+                               m_params.spacer_trace_file().bare_str(),
+                               std::ios_base::out);
+    }
 }
 
 context::~context()
 {
     reset_lemma_generalizers();
+    dealloc(m_lmma_cluster);
     reset();
+
+    if (m_trace_stream) {
+        m_trace_stream->close();
+        dealloc(m_trace_stream);
+        m_trace_stream = nullptr;
+    }
 }
 
 void context::updt_params() {
@@ -2354,7 +2376,13 @@ void context::updt_params() {
     m_restart_initial_threshold = m_params.spacer_restart_initial_threshold();
     m_pdr_bfs = m_params.spacer_gpdr_bfs();
     m_use_bg_invs = m_params.spacer_use_bg_invs();
+    m_global = m_params.spacer_global();
+    m_expand_bnd = m_params.spacer_expand_bnd();
+    m_gg_conjecture = m_params.spacer_gg_conjecture();
+    m_gg_subsume = m_params.spacer_gg_subsume();
+    m_gg_concretize = m_params.spacer_gg_concretize();
 
+    m_use_iuc = m_params.spacer_use_iuc();
     if (m_use_gpdr) {
         // set options to be compatible with GPDR
         m_weak_abs = false;
@@ -2389,10 +2417,10 @@ void context::init_rules(datalog::rule_set& rules, decl2rel& rels)
         func_decl* pred = dit->m_key;
         TRACE("spacer", tout << mk_pp(pred, m) << "\n";);
         SASSERT(!rels.contains(pred));
-        auto *e = rels.insert_if_not_there2(pred, alloc(pred_transformer, *this,
+        auto* pt = rels.insert_if_not_there(pred, alloc(pred_transformer, *this,
                                                         get_manager(), pred));
         datalog::rule_vector const& pred_rules = *dit->m_value;
-        for (auto rule : pred_rules) {e->get_data().m_value->add_rule(rule);}
+        for (auto rule : pred_rules) {pt->add_rule(rule);}
     }
 
     // Allocate predicate transformers for predicates that are used
@@ -2502,8 +2530,9 @@ void context::add_cover(int level, func_decl* p, expr* property, bool bg)
     pt->add_cover(lvl, property, bg);
 }
 
-void context::add_invariant (func_decl *p, expr *property)
-{add_cover (infty_level(), p, property, use_bg_invs());}
+void context::add_invariant (func_decl *p, expr *property) {
+    add_cover (infty_level(), p, property, use_bg_invs());
+}
 
 expr_ref context::get_reachable(func_decl *p) {
     pred_transformer* pt = nullptr;
@@ -2571,7 +2600,7 @@ bool context::validate() {
                 for (unsigned j = utsz; j < tsz; ++j) {
                     fmls.push_back(r.get_tail(j));
                 }
-                tmp = m.mk_and(fmls.size(), fmls.c_ptr());
+                tmp = m.mk_and(fmls.size(), fmls.data());
                 svector<symbol> names;
                 expr_free_vars fv;
                 fv (tmp);
@@ -2582,7 +2611,7 @@ bool context::validate() {
                 }
                 if (!fv.empty()) {
                     fv.reverse ();
-                    tmp = m.mk_exists(fv.size(), fv.c_ptr(), names.c_ptr(), tmp);
+                    tmp = m.mk_exists(fv.size(), fv.data(), names.data(), tmp);
                 }
                 ref<solver> sol =
                     mk_smt_solver(m, params_ref::get_empty(), symbol::null);
@@ -2619,12 +2648,13 @@ void context::init_global_smt_params() {
     m.toggle_proof_mode(PGM_ENABLED);
     params_ref p;
     if (!m_use_eq_prop) {
-        p.set_uint("arith.propagation_mode", BP_NONE);
+        p.set_uint("arith.propagation_mode", (unsigned)bound_prop_mode::BP_NONE);
         p.set_bool("arith.auto_config_simplex", true);
         p.set_bool("arith.propagate_eqs", false);
         p.set_bool("arith.eager_eq_axioms", false);
     }
     p.set_uint("random_seed", m_params.spacer_random_seed());
+    p.set_bool("clause_proof", false);
 
     p.set_bool("dump_benchmarks", m_params.spacer_dump_benchmarks());
     p.set_double("dump_threshold", m_params.spacer_dump_threshold());
@@ -2670,7 +2700,8 @@ void context::init_lemma_generalizers()
     //m_lemma_generalizers.push_back (alloc (unsat_core_generalizer, *this));
 
     if (m_use_ind_gen) {
-        m_lemma_generalizers.push_back(alloc(lemma_bool_inductive_generalizer, *this, 0));
+        // m_lemma_generalizers.push_back(alloc(lemma_bool_inductive_generalizer, *this, 0));
+        m_lemma_generalizers.push_back(alloc_lemma_inductive_generalizer(*this));
     }
 
     // after the lemma is minimized (maybe should also do before)
@@ -2683,6 +2714,15 @@ void context::init_lemma_generalizers()
         m_lemma_generalizers.push_back(alloc(lemma_array_eq_generalizer, *this));
     }
 
+    if (m_global) {
+        m_global_gen = alloc(lemma_global_generalizer, *this);
+        m_lemma_generalizers.push_back(m_global_gen);
+    }
+
+    if (m_expand_bnd) {
+        m_expand_bnd_gen = alloc(lemma_expand_bnd_generalizer, *this);
+        m_lemma_generalizers.push_back(m_expand_bnd_gen);
+    }
     if (m_validate_lemmas) {
         m_lemma_generalizers.push_back(alloc(lemma_sanity_checker, *this));
     }
@@ -2760,11 +2800,8 @@ lbool context::solve(unsigned from_lvl)
 }
 
 
-void context::checkpoint()
-{
-    if (m.canceled ()) {
-        throw default_exception("spacer canceled");
-    }
+void context::checkpoint() {
+    tactic::checkpoint(m);
 }
 
 unsigned context::get_cex_depth()
@@ -2928,17 +2965,13 @@ expr_ref context::get_answer()
     }
 }
 
-
-
-expr_ref context::mk_unsat_answer() const
-{
+expr_ref context::mk_unsat_answer() const {
     expr_ref_vector refs(m);
     vector<relation_info> rs;
     get_level_property(m_inductive_lvl, refs, rs, use_bg_invs());
     inductive_property ex(m, const_cast<model_converter_ref&>(m_mc), rs);
     return ex.to_expr();
 }
-
 
 proof_ref context::get_ground_refutation() const {
     if (m_last_result != l_true) {
@@ -2957,12 +2990,12 @@ expr_ref context::get_ground_sat_answer() const {
                    << "Sat answer unavailable when result is false\n";);
         return expr_ref(m);
     }
-
+    
     // convert a ground refutation into a linear counterexample
     // only works for linear CHC systems
     expr_ref_vector cex(m);
     proof_ref pf = get_ground_refutation();
-
+    
     proof_ref_vector premises(m);
     expr_ref conclusion(m);
     svector<std::pair<unsigned, unsigned>> positions;
@@ -2979,25 +3012,25 @@ expr_ref context::get_ground_sat_answer() const {
         } else {
             pf.reset();
             break;
-    }
-
+        }
+        
         premises.reset();
         conclusion.reset();
         positions.reset();
         substs.reset();
-        }
+    }
     SASSERT(!pf || !m.is_hyper_resolve(pf));
     if (pf) {
         cex.push_back(m.get_fact(pf));
     }
-
+    
     TRACE ("spacer", tout << "ground cex\n" << cex << "\n";);
 
     return mk_and(cex);
 }
 
 void context::display_certificate(std::ostream &out) const {
-    switch(m_last_result) {
+    switch (m_last_result) {
     case l_false:
         out << mk_pp(mk_unsat_answer(), m);
         break;
@@ -3032,9 +3065,7 @@ lbool context::solve_core (unsigned from_lvl)
         if (check_reachability()) { return l_true; }
 
         if (lvl > 0 && m_use_propagate)
-            if (propagate(m_expanded_lvl, lvl, UINT_MAX)) { dump_json(); return l_false; }
-
-        dump_json();
+            if (propagate(m_expanded_lvl, lvl, UINT_MAX)) { return l_false; }
 
         if (is_inductive()){
             return l_false;
@@ -3048,21 +3079,97 @@ lbool context::solve_core (unsigned from_lvl)
         m_pob_queue.inc_level ();
         lvl = m_pob_queue.max_level ();
         m_stats.m_max_depth = std::max(m_stats.m_max_depth, lvl);
-        IF_VERBOSE(1,verbose_stream() << "Entering level "<< lvl << "\n";);
-
-        STRACE("spacer_progress", tout << "\n* LEVEL " << lvl << "\n";);
-        IF_VERBOSE(1,
-                   if (m_params.print_statistics()) {
-                       statistics st;
-                       collect_statistics(st);
-                       st.display_smt2(verbose_stream());
-                   };
-            );
-
+        log_enter_level(lvl);
     }
     // communicate failure to datalog::context
     if (m_context) { m_context->set_status(datalog::BOUNDED); }
     return l_undef;
+}
+
+void context::log_enter_level(unsigned lvl) {
+
+    if (m_trace_stream) { *m_trace_stream << "\n* LEVEL " << lvl << "\n\n"; }
+
+    IF_VERBOSE(1, verbose_stream() << "Entering level " << lvl << "\n";);
+    STRACE("spacer_progress", tout << "\n* LEVEL " << lvl << "\n";);
+
+    IF_VERBOSE(
+        1, if (m_params.print_statistics()) {
+            statistics st;
+            collect_statistics(st);
+            st.display_smt2(verbose_stream());
+        };);
+}
+
+void context::log_propagate() {
+    if (m_trace_stream) *m_trace_stream << "Propagating\n\n";
+    STRACE("spacer_progress", tout << "Propagating\n";);
+    IF_VERBOSE(1, verbose_stream() << "Propagating: " << std::flush;);
+}
+
+void context::log_expand_pob(pob &n) {
+    if (m_trace_stream) {
+        std::string pob_id = "none";
+        if (n.parent()) pob_id = std::to_string(n.parent()->post()->get_id());
+
+        *m_trace_stream << "** expand-pob: " << n.pt().head()->get_name()
+                        << (n.is_conjecture() ? " CONJ" : "")
+                        << (n.is_subsume() ? " SUBS" : "")
+                        << " level: " << n.level()
+                        << " depth: " << (n.depth() - m_pob_queue.min_depth())
+                        << " exprID: " << n.post()->get_id() << " pobID: " << pob_id << "\n"
+                        << mk_epp(n.post(), m) << "\n\n";
+    }
+
+    TRACE("spacer", tout << "expand-pob: " << n.pt().head()->get_name()
+                         << (n.is_conjecture() ? " CONJ" : "")
+                         << (n.is_subsume() ? " SUBS" : "")
+                         << " level: " << n.level()
+                         << " depth: " << (n.depth() - m_pob_queue.min_depth())
+                         << " fvsz: " << n.get_free_vars_size()
+                         << " gas: " << n.get_gas() << "\n"
+                         << mk_pp(n.post(), m) << "\n";);
+
+    STRACE("spacer_progress",
+           tout << "** expand-pob: " << n.pt().head()->get_name()
+                << (n.is_conjecture() ? " CONJ" : "")
+                << (n.is_subsume() ? " SUBS" : "")
+                << " level: " << n.level()
+                << " depth: " << (n.depth() - m_pob_queue.min_depth()) << "\n"
+                << mk_epp(n.post(), m) << "\n\n";);
+}
+
+void context::log_add_lemma(pred_transformer &pt, lemma &new_lemma) {
+    unsigned lvl = new_lemma.level();
+    expr *fml = new_lemma.get_expr();
+    std::string pob_id = "none";
+    if (new_lemma.get_pob())
+        pob_id = std::to_string(new_lemma.get_pob()->post()->get_id());
+    if (m_trace_stream) {
+        *m_trace_stream << "** add-lemma: "
+                        << pp_level(lvl) << " "
+                        << "exprID: " << fml->get_id() << " "
+                        << "pobID: " << pob_id << "\n"
+                        << pt.head()->get_name() << "\n"
+                        << mk_epp(fml, m) << "\n";
+        if (!new_lemma.is_ground()) {
+            *m_trace_stream << "Bindings: " << new_lemma.get_bindings()
+                            << "\n";
+        }
+        *m_trace_stream << "\n";
+    }
+
+    TRACE("spacer", tout << "add-lemma-core: " << pp_level(lvl) << " "
+                         << pt.head()->get_name() << " " << mk_pp(fml, m) << "\n";);
+
+    STRACE("spacer_progress",
+           tout << "** add-lemma: " << pp_level(lvl) << " "
+           << pt.head()->get_name() << " " << mk_epp(fml, m)
+           << "\n";
+           if (!new_lemma.is_ground()) {
+               tout << "Bindings: " << new_lemma.get_bindings() << "\n";
+           }
+           tout << "\n";);
 }
 
 
@@ -3094,13 +3201,21 @@ bool context::check_reachability ()
             node = last_reachable;
             last_reachable = nullptr;
             if (m_pob_queue.is_root(*node)) { return true; }
-            if (is_reachable (*node->parent())) {
-                last_reachable = node->parent ();
+
+            // do not check the parent if its may pob status is different
+            if (node->parent()->is_may_pob() != node->is_may_pob())
+              {
+                last_reachable = nullptr;
+                break;
+              }
+
+            if (is_reachable(*node->parent())) {
+                last_reachable = node->parent();
                 SASSERT(last_reachable->is_closed());
-                last_reachable->close ();
+                last_reachable->close();
             } else if (!node->parent()->is_closed()) {
                 /* bump node->parent */
-                node->parent ()->bump_weakness();
+                node->parent()->bump_weakness();
             }
         }
 
@@ -3145,20 +3260,37 @@ bool context::check_reachability ()
         case l_true:
             SASSERT(m_pob_queue.size() == old_sz);
             SASSERT(new_pobs.empty());
+            node->close();
             last_reachable = node;
-            last_reachable->close ();
-            if (m_pob_queue.is_root(*node)) {return true;}
+            if (m_pob_queue.is_root(*node)) { return true; }
             break;
         case l_false:
             SASSERT(m_pob_queue.size() == old_sz);
+            // re-queue all pobs introduced by global gen and any pobs that can be blocked at a higher level
             for (auto pob : new_pobs) {
-                if (is_requeue(*pob)) {m_pob_queue.push(*pob);}
+                TRACE("gg", tout << "pob: is_may_pob " << pob->is_may_pob()
+                      << " with post:\n"
+                      << mk_pp(pob->post(), m) 
+                      << "\n";);
+                //if ((pob->is_may_pob() && pob->post() != node->post()) || is_requeue(*pob)) {
+                if (is_requeue(*pob)) {
+                  TRACE("gg",
+                        tout << "Adding back blocked pob at level "
+                             << pob->level()
+                             << " and depth " << pob->depth() << "\n");
+                    m_pob_queue.push(*pob);
+                }
             }
 
             if (m_pob_queue.is_root(*node)) {return false;}
             break;
         case l_undef:
             SASSERT(m_pob_queue.size() == old_sz);
+            // collapse may pobs if the reachability of one of them cannot
+            // be estimated
+            if ((node->is_may_pob()) && new_pobs.size() == 0) {
+                close_all_may_parents(node);
+            }
             for (auto pob : new_pobs) {m_pob_queue.push(*pob);}
             break;
         }
@@ -3171,7 +3303,10 @@ bool context::check_reachability ()
 
 /// returns true if the given pob can be re-scheduled
 bool context::is_requeue(pob &n) {
-    if (!m_push_pob) {return false;}
+    // if have not reached desired level, then requeue 
+    if (n.level() <= n.desired_level()) { return true; }
+    if (!m_push_pob) { return false; }
+
     unsigned max_depth = m_push_pob_max_depth;
     return (n.level() >= m_pob_queue.max_level() ||
             m_pob_queue.max_level() - n.level() <= max_depth);
@@ -3207,15 +3342,15 @@ bool context::is_reachable(pob &n)
     bool is_concrete;
     const datalog::rule * r = nullptr;
     // denotes which predecessor's (along r) reach facts are used
-    vector<bool> reach_pred_used;
+    bool_vector reach_pred_used;
     unsigned num_reuse_reach = 0;
 
     unsigned saved = n.level ();
     // TBD: don't expose private field
     n.m_level = infty_level ();
-    lbool res = n.pt().is_reachable(n, nullptr, &mdl,
-                                    uses_level, is_concrete, r,
-                                    reach_pred_used, num_reuse_reach);
+    lbool res =
+        n.pt().is_reachable(n, nullptr, &mdl, uses_level, is_concrete, r,
+                            reach_pred_used, num_reuse_reach, m_use_iuc);
     n.m_level = saved;
 
     if (res != l_true || !is_concrete) {
@@ -3269,22 +3404,102 @@ bool context::is_reachable(pob &n)
     return next ? is_reachable(*next) : true;
 }
 
-void context::dump_json()
-{
-    if (m_params.spacer_print_json().size()) {
-        std::ofstream of;
-        of.open(m_params.spacer_print_json().bare_str());
-        m_json_marshaller.marshal(of);
-        of.close();
-    }
-}
-
 void context::predecessor_eh()
 {
     for (unsigned i = 0; i < m_callbacks.size(); i++) {
         if (m_callbacks[i]->predecessor())
             m_callbacks[i]->predecessor_eh();
     }
+}
+
+// Update a partial model to be consistent over reachable facts in pt
+
+// Conceptually, a reachable fact is asserted as tag == > fact,
+// where tag is a Boolean literal and fact a formula. When the model is partial,
+// it is possible that tag is true, but model.eval(fact) is unknown
+// This function fixes the model by flipping the value of tag in
+// this case.
+bool pred_transformer::mk_mdl_rf_consistent(const datalog::rule *r,
+                                            model &model) {
+    expr_ref rf(m);
+    reach_fact_ref_vector child_reach_facts;
+
+    SASSERT(r != nullptr);
+    ptr_vector<func_decl> preds;
+    find_predecessors(*r, preds);
+    for (unsigned i = 0; i < preds.size(); i++) {
+        func_decl *pred = preds[i];
+        bool atleast_one_true = false;
+        pred_transformer &ch_pt = ctx.get_pred_transformer(pred);
+        // get all reach facts of pred used in the model
+        expr_ref o_ch_reach(m);
+        reach_fact_ref_vector used_rfs;
+        ch_pt.get_all_used_rf(model, i, used_rfs);
+        for (auto *rf : used_rfs) {
+            pm.formula_n2o(rf->get(), o_ch_reach, i);
+            if (!model.is_true(o_ch_reach)) {
+                func_decl *tag = to_app(rf->tag())->get_decl();
+                set_true_in_mdl(model, tag);
+            } else
+                atleast_one_true = true;
+        }
+        if (used_rfs.size() > 0 && !atleast_one_true) {
+            TRACE("spacer_detail",
+                  tout << "model does not satisfy any reachable fact\n";);
+            return false;
+        }
+    }
+    return true;
+}
+
+// Update a partial model to be consistent over reachable facts.
+
+// Conceptually, a reachable fact is asserted as tag == > fact,
+// where tag is a Boolean literal and fact a formula. When the model is partial,
+// it is possible that tag is true, but model.eval(fact) is unknown
+// This function fixes the model by flipping the value of tag in
+// this case.
+bool context::mk_mdl_rf_consistent(model &mdl) {
+    reach_fact_ref_vector used_rfs;
+    expr_ref exp(m);
+    for (auto &rel : m_rels) {
+        bool atleast_one_true = false;
+        pred_transformer &pt = *rel.m_value;
+        used_rfs.reset();
+        pt.get_all_used_rf(mdl, used_rfs);
+        for (auto *rf : used_rfs) {
+            if (!mdl.is_true(rf->get())) {
+                func_decl *tag = to_app(rf->tag())->get_decl();
+                set_true_in_mdl(mdl, tag);
+            } else
+                atleast_one_true = true;
+        }
+        if (used_rfs.size() > 0 && !atleast_one_true) {
+            TRACE("spacer_detail",
+                  tout << "model does not satisfy any reachable fact\n";);
+            return false;
+        }
+    }
+    return true;
+}
+
+// Handle cases where solver returns unknown but returns a good enough model
+// model is good enough if it satisfies
+// 1. all the reachable states whose tag is set in the model
+// 2. Tr && pob
+lbool context::handle_unknown(pob &n, const datalog::rule *r, model &model) {
+    if (r == nullptr) {
+        if (model.is_true(n.post()) && mk_mdl_rf_consistent(model))
+            return l_true;
+        else
+            return l_undef;
+    }
+    // model \models reach_fact && Tr && pob
+    if (model.is_true(n.pt().get_transition(*r)) && model.is_true(n.post()) &&
+        n.pt().mk_mdl_rf_consistent(r, model)) {
+        return l_true;
+    }
+    return l_undef;
 }
 
 /// Checks whether the given pob is reachable
@@ -3295,34 +3510,19 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
 {
     SASSERT(out.empty());
     pob::on_expand_event _evt(n);
-    TRACE ("spacer",
-           tout << "expand-pob: " << n.pt().head()->get_name()
-           << " level: " << n.level()
-           << " depth: " << (n.depth () - m_pob_queue.min_depth ())
-           << " fvsz: " << n.get_free_vars_size() << "\n"
-           << mk_pp(n.post(), m) << "\n";);
 
-    STRACE ("spacer_progress",
-            tout << "** expand-pob: " << n.pt().head()->get_name()
-            << " level: " << n.level()
-            << " depth: " << (n.depth () - m_pob_queue.min_depth ()) << "\n"
-            << mk_epp(n.post(), m) << "\n\n";);
-
-    TRACE ("core_array_eq",
-           tout << "expand-pob: " << n.pt().head()->get_name()
-           << " level: " << n.level()
-           << " depth: " << (n.depth () - m_pob_queue.min_depth ()) << "\n"
-           << mk_pp(n.post(), m) << "\n";);
+    log_expand_pob(n);
 
     stopwatch watch;
-    IF_VERBOSE (1, verbose_stream () << "expand: " << n.pt ().head ()->get_name ()
-                << " (" << n.level () << ", "
+    IF_VERBOSE(1, verbose_stream()
+                      << "expand: " << n.pt().head()->get_name() << " ("
+                      << n.level() << ", "
                 << (n.depth () - m_pob_queue.min_depth ()) << ") "
                 << (n.use_farkas_generalizer () ? "FAR " : "SUB ")
-                << " w(" << n.weakness() << ") "
-                << n.post ()->get_id ();
-                verbose_stream().flush ();
-                watch.start (););
+                      << (n.is_conjecture() ? "CONJ " : "")
+                      << (n.is_subsume() ? " SUBS" : "") << " w("
+                      << n.weakness() << ") " << n.post()->get_id();
+               verbose_stream().flush(); watch.start(););
 
     // used in case n is unreachable
     unsigned uses_level = infty_level ();
@@ -3333,30 +3533,66 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
     bool is_concrete;
     const datalog::rule * r = nullptr;
     // denotes which predecessor's (along r) reach facts are used
-    vector<bool> reach_pred_used;
+    bool_vector reach_pred_used;
     unsigned num_reuse_reach = 0;
 
 
-    if (m_push_pob && n.pt().is_blocked(n, uses_level)) {
+    if (!n.is_may_pob() && m_push_pob && n.pt().is_blocked(n, uses_level)) {
         // if (!m_pob_queue.is_root (n)) n.close ();
         IF_VERBOSE (1, verbose_stream () << " K "
                     << std::fixed << std::setprecision(2)
-                    << watch.get_seconds () << "\n";);
-        n.inc_level();
-        out.push_back(&n);
-        return l_false;
-    }
+                      << watch.get_seconds () << "\n";);
+          n.inc_level();
+          out.push_back(&n);
+          return l_false;
+      }
 
-    if (/* XXX noop */ n.pt().is_qblocked(n)) {
-        STRACE("spacer_progress",
-               tout << "This pob can be blocked by instantiation\n";);
-    }
+      if (/* XXX noop */ n.pt().is_qblocked(n)) {
+          STRACE("spacer_progress",
+                tout << "This pob can be blocked by instantiation\n";);
+      }
 
+      if ((n.is_may_pob()) && n.get_gas() == 0) {
+          TRACE("global", tout << "Cant prove may pob. Collapsing "
+                              << mk_pp(n.post(), m) << "\n";);
+          m_stats.m_num_pob_ofg++;
+          return l_undef;
+      }
+      // Decide whether to concretize pob
+      // get a model that satisfies the pob and the current set of lemmas
+      // TODO: if push_pob is enabled, avoid calling is_blocked twice
+      if (m_gg_concretize && n.is_concretize_enabled() &&
+          !n.pt().is_blocked(n, uses_level, &model)) {
+        TRACE("global",
+              tout << "Concretizing: " << mk_pp(n.post(), m) << "\n"
+              << "\t" << n.get_gas() << " attempts left\n";);
+
+          SASSERT(m_global_gen);
+          if (pob *new_pob = m_global_gen->mk_concretize_pob(n, model)) {
+              m_stats.m_num_concretize++;
+              out.push_back(new_pob);
+              out.push_back(&n);
+              IF_VERBOSE(1, verbose_stream()
+                                << " C " << std::fixed << std::setprecision(2)
+                                << watch.get_seconds() << "\n";);
+              unsigned gas = n.get_gas();
+              SASSERT(gas > 0);
+              // dec gas for orig pob to limit number of concretizations
+              new_pob->set_gas(gas--);
+              n.set_gas(gas);
+              return l_undef;
+          }
+      }
+
+    model = nullptr;
     predecessor_eh();
 
-    lbool res = n.pt ().is_reachable (n, &cube, &model, uses_level, is_concrete, r,
-                                      reach_pred_used, num_reuse_reach);
+    lbool res =
+        n.pt().is_reachable(n, &cube, &model, uses_level, is_concrete, r,
+                            reach_pred_used, num_reuse_reach, m_use_iuc);
     if (model) model->set_model_completion(false);
+    if (res == l_undef && model) res = handle_unknown(n, r, *model);
+
     checkpoint ();
     IF_VERBOSE (1, verbose_stream () << "." << std::flush;);
     switch (res) {
@@ -3368,10 +3604,15 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
         // must-reachable
         if (is_concrete) {
             // -- update must summary
-            if (r && r->get_uninterpreted_tail_size() > 0) {
-                reach_fact_ref rf = n.pt().mk_rf (n, *model, *r);
+            CTRACE("spacer_sat", r,
+                   tout << "Concrete reachable with a rule:\n";
+                   get_datalog_context().get_rule_manager().display_smt2(*r, tout) << "\n";
+                   );
+            bool is_root = m_pob_queue.is_root(n);
+            if (r && (r->get_uninterpreted_tail_size() > 0 || is_root )) {
+                reach_fact_ref rf = n.pt().mk_rf(n, *model, *r);
                 checkpoint ();
-                n.pt ().add_rf (rf.get ());
+                n.pt ().add_rf(rf.get (), is_root);
                 checkpoint ();
             }
 
@@ -3396,7 +3637,18 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
                     out.push_back (next);
                 }
             }
+            if(n.is_subsume())
+                m_stats.m_num_subsume_pob_reachable++;
+            if(n.is_conjecture())
+                m_stats.m_num_conj_failed++;
 
+            CTRACE("global", n.is_conjecture(),
+                   tout << "Failed to block conjecture "
+                   << n.post()->get_id() << "\n";);
+
+            CTRACE("global", n.is_subsume(),
+                   tout << "Failed to block subsume generalization "
+                        << mk_pp(n.post(), m) << "\n";);
 
             IF_VERBOSE(1, verbose_stream () << (next ? " X " : " T ")
                        << std::fixed << std::setprecision(2)
@@ -3404,18 +3656,30 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
             return next ? l_undef : l_true;
         }
 
-        // create a child of n
-
-        out.push_back(&n);
-        VERIFY(create_children (n, *r, *model, reach_pred_used, out));
-        IF_VERBOSE(1, verbose_stream () << " U "
-                   << std::fixed << std::setprecision(2)
-                   << watch.get_seconds () << "\n";);
-        return l_undef;
-
+        // Try to create child with model
+        // create_children() might return false if solver is incomplete (e.g.,
+        // due to weak_abs)
+        if (create_children(n, *r, *model, reach_pred_used, out)) {
+          out.push_back(&n);
+          IF_VERBOSE(1, verbose_stream()
+                            << " U " << std::fixed << std::setprecision(2)
+                            << watch.get_seconds() << "\n";);
+          return l_undef;
+        } else if (n.weakness() < 10) {
+          // Cannot create child. Increase weakness and try again.
+          SASSERT(out.empty());
+          n.bump_weakness();
+          IF_VERBOSE(1, verbose_stream()
+                            << " UNDEF " << std::fixed << std::setprecision(2)
+                            << watch.get_seconds() << "\n";);
+          // Recursion bounded by weakness (atmost 10 right now)
+          return expand_pob(n, out);
+        }
+        TRACE("spacer", tout << "unknown state: " << mk_and(cube) << "\n";);
+        throw unknown_exception();
     }
     case l_false: {
-        // n is unreachable, create new summary facts
+        // n is unreachable, create a new lemma
         timeit _timer (is_trace_enabled("spacer_timeit"),
                        "spacer::expand_pob::false",
                        verbose_stream ());
@@ -3423,40 +3687,68 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
         // -- only update expanded level when new lemmas are generated at it.
         if (n.level() < m_expanded_lvl) { m_expanded_lvl = n.level(); }
 
-        TRACE("spacer", tout << "cube:\n";
-              for (unsigned j = 0; j < cube.size(); ++j)
-                  tout << mk_pp(cube[j].get(), m) << "\n";);
+        TRACE("spacer", tout << "cube:\n" << cube << "\n";);
 
+        if(n.is_conjecture()) m_stats.m_num_conj_success++;
+        if(n.is_subsume()) m_stats.m_num_subsume_pob_blckd++;
 
         pob_ref nref(&n);
+
         // -- create lemma from a pob and last unsat core
-        lemma_ref lemma = alloc(class lemma, pob_ref(&n), cube, uses_level);
+        lemma_ref lemma_pob;
+        if (n.is_local_gen_enabled()) {
+            lemma_pob = alloc(class lemma, nref, cube, uses_level);
+            // -- run all lemma generalizers
+            for (unsigned i = 0;
+                 // -- only generalize if lemma was constructed using farkas
+                 n.use_farkas_generalizer() && !lemma_pob->is_false() &&
+                   i < m_lemma_generalizers.size();
+                 ++i) {
+                checkpoint ();
+                (*m_lemma_generalizers[i])(lemma_pob);
+            }
+        } else if (m_global_gen || m_expand_bnd_gen) {
+            m_stats.m_non_local_gen++;
 
-        // -- run all lemma generalizers
-        for (unsigned i = 0;
-             // -- only generalize if lemma was constructed using farkas
-             n.use_farkas_generalizer () && !lemma->is_false() &&
-                 i < m_lemma_generalizers.size(); ++i) {
-            checkpoint ();
-            (*m_lemma_generalizers[i])(lemma);
+            expr_ref_vector pob_cube(m);
+            n.get_post_simplified(pob_cube);
+
+            lemma_pob = alloc(class lemma, nref, pob_cube, n.level());
+            TRACE("global", tout << "Disabled local gen on pob (id: "
+                                 << n.post()->get_id() << ")\n"
+                                 << mk_pp(n.post(), m) << "\n"
+                                 << "Lemma:\n"
+                                 << mk_and(lemma_pob->get_cube()) << "\n";);
+            if (m_global_gen) (*m_global_gen)(lemma_pob);
+            if (m_expand_bnd_gen) (*m_expand_bnd_gen)(lemma_pob);
+        } else {
+            lemma_pob = alloc(class lemma, nref, cube, uses_level);
         }
-        DEBUG_CODE(
-            lemma_sanity_checker sanity_checker(*this);
-            sanity_checker(lemma);
-            );
 
+        CTRACE("global", n.is_conjecture() || n.is_subsume(),
+               tout << "Blocked "
+                    << (n.is_conjecture() ? "conjecture " : "subsume ") << n.post()->get_id()
+                    << " at level " << n.level()
+                    << " using lemma\n" << mk_pp(lemma_pob->get_expr(), m) << "\n";);
 
-        TRACE("spacer", tout << "invariant state: "
-              << (is_infty_level(lemma->level())?"(inductive)":"")
-              <<  mk_pp(lemma->get_expr(), m) << "\n";);
+        DEBUG_CODE(lemma_sanity_checker sanity_checker(*this);
+                   sanity_checker(lemma_pob););
 
-        bool v = n.pt().add_lemma (lemma.get());
-        if (v) { m_stats.m_num_lemmas++; }
+        TRACE("spacer",
+              tout << "invariant state: "
+                   << (is_infty_level(lemma_pob->level()) ? "(inductive)" : "")
+                   << mk_pp(lemma_pob->get_expr(), m) << "\n";);
+
+        bool is_new = n.pt().add_lemma(lemma_pob.get());
+        if (is_new) {
+            if (m_global) m_lmma_cluster->cluster(lemma_pob);
+            m_stats.m_num_lemmas++;
+        }
 
         // Optionally update the node to be the negation of the lemma
-        if (v && m_use_lemma_as_pob) {
+        if (is_new && m_use_lemma_as_pob) {
             expr_ref c(m);
-            c = mk_and(lemma->get_cube());
+            c = mk_and(lemma_pob->get_cube());
             // check that the post condition is different
             if (c  != n.post()) {
                 pob *f = n.pt().find_pob(n.parent(), c);
@@ -3470,6 +3762,28 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
                     out.push_back(f);
                 }
             }
+        }
+
+        if (m_global_gen) {
+            // if global gen is enabled, post-process the pob to create new subsume or conjecture pob
+            if (pob* new_pob = m_global_gen->mk_subsume_pob(n)) {
+                new_pob->set_gas(n.get_gas() - 1);
+                n.set_gas(n.get_gas() - 1);
+                out.push_back(new_pob);
+                m_stats.m_num_subsume_pobs++;
+
+                TRACE("global_verbose",
+                      tout << "New subsume pob\n" << mk_pp(new_pob->post(), m) << "\n"
+                           << "gas:" << new_pob->get_gas() << "\n";);
+            } else if (pob* new_pob = m_gg_conjecture ? m_global_gen->mk_conjecture_pob(n) : nullptr) {
+                new_pob->set_gas(n.get_gas() - 1);
+                n.set_gas(n.get_gas() - 1);
+                out.push_back(new_pob);
+                m_stats.m_num_conj++;
+
+                TRACE("global",
+                      tout << "New conjecture pob\n" << mk_pp(new_pob->post(), m) << "\n";);
+              }
         }
 
         // schedule the node to be placed back in the queue
@@ -3486,7 +3800,24 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
         return l_false;
     }
     case l_undef:
-        // something went wrong
+        // if the pob is a may pob, handle specially
+        if (n.is_may_pob()) {
+          // do not create children, but bump weakness
+          // bail out if this does not help
+          // AG: do not know why this is a good strategy
+          if (n.weakness() < 10) {
+              SASSERT(out.empty());
+              n.bump_weakness();
+              return expand_pob(n, out);
+            }
+            n.close();
+            m_stats.m_expand_pob_undef++;
+            IF_VERBOSE(1, verbose_stream() << " UNDEF "
+                       << std::fixed << std::setprecision(2)
+                       << watch.get_seconds () << "\n";);
+            return l_undef;
+        }
+
         if (n.weakness() < 10 /* MAX_WEAKENSS */) {
             bool has_new_child = false;
             SASSERT(m_weak_abs);
@@ -3520,6 +3851,7 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
     throw unknown_exception();
 }
 
+
 //
 // check if predicate transformer has a satisfiable predecessor state.
 // returns either a satisfiable predecessor state or
@@ -3543,9 +3875,9 @@ bool context::propagate(unsigned min_prop_lvl,
     if (m_simplify_formulas_pre) {
         simplify_formulas();
     }
-    STRACE ("spacer_progress", tout << "Propagating\n";);
 
-    IF_VERBOSE (1, verbose_stream () << "Propagating: " << std::flush;);
+    log_propagate();
+
 
     for (unsigned lvl = min_prop_lvl; lvl <= full_prop_lvl; lvl++) {
         IF_VERBOSE (1,
@@ -3628,27 +3960,22 @@ reach_fact *pred_transformer::mk_rf(pob& n, model &mdl, const datalog::rule& r)
     // collect aux vars to eliminate
     ptr_vector<app>& aux_vars = get_aux_vars (r);
     bool elim_aux = ctx.elim_aux();
-    if (elim_aux) { vars.append(aux_vars.size(), aux_vars.c_ptr()); }
+    if (elim_aux) { vars.append(aux_vars.size(), aux_vars.data()); }
 
     res = mk_and (path_cons);
 
     // -- pick an implicant from the path condition
     if (ctx.reach_dnf()) {
-        expr_ref_vector u(m), lits(m);
+        expr_ref_vector u(m);
         u.push_back (res);
-        compute_implicant_literals (mdl, u, lits);
-        res = mk_and (lits);
+        res = mk_and (compute_implicant_literals(mdl, u));
     }
 
 
     TRACE ("spacer",
            tout << "Reach fact, before QE:\n";
-           tout << mk_pp (res, m) << "\n";
-           tout << "Vars:\n";
-           for (unsigned i = 0; i < vars.size(); ++i) {
-               tout << mk_pp(vars.get (i), m) << "\n";
-           }
-        );
+           tout << res << "\n";
+           tout << "Vars:\n" << vars << "\n";);        
 
     {
         timeit _timer1 (is_trace_enabled("spacer_timeit"),
@@ -3660,11 +3987,8 @@ reach_fact *pred_transformer::mk_rf(pob& n, model &mdl, const datalog::rule& r)
 
     TRACE ("spacer",
            tout << "Reach fact, after QE project:\n";
-           tout << mk_pp (res, m) << "\n";
-           tout << "Vars:\n";
-           for (unsigned i = 0; i < vars.size(); ++i) {
-               tout << mk_pp(vars.get (i), m) << "\n";
-           }
+           tout << res << "\n";
+           tout << "Vars:\n" << vars << "\n";
         );
 
     SASSERT (vars.empty ());
@@ -3672,8 +3996,8 @@ reach_fact *pred_transformer::mk_rf(pob& n, model &mdl, const datalog::rule& r)
     m_stats.m_num_reach_queries++;
     ptr_vector<app> empty;
     reach_fact *f = alloc(reach_fact, m, r, res, elim_aux ? empty : aux_vars);
-    for (unsigned i = 0, sz = child_reach_facts.size (); i < sz; ++i)
-    { f->add_justification(child_reach_facts.get(i)); }
+    for (reach_fact* cf : child_reach_facts)
+        f->add_justification(cf);
     return f;
 }
 
@@ -3683,7 +4007,7 @@ reach_fact *pred_transformer::mk_rf(pob& n, model &mdl, const datalog::rule& r)
 */
 bool context::create_children(pob& n, datalog::rule const& r,
                               model &mdl,
-                              const vector<bool> &reach_pred_used,
+                              const bool_vector &reach_pred_used,
                               pob_ref_buffer &out)
 {
     scoped_watch _w_ (m_create_children_watch);
@@ -3703,11 +4027,11 @@ bool context::create_children(pob& n, datalog::rule const& r,
 
 
     // obtain all formulas to consider for model generalization
-    expr_ref_vector forms(m), lits(m);
+    expr_ref_vector forms(m);
     forms.push_back(pt.get_transition(r));
     forms.push_back(n.post());
 
-    compute_implicant_literals (mdl, forms, lits);
+    expr_ref_vector lits = compute_implicant_literals (mdl, forms);
     expr_ref phi = mk_and (lits);
 
     // primed variables of the head
@@ -3717,7 +4041,7 @@ bool context::create_children(pob& n, datalog::rule const& r,
     }
     // local variables of the rule
     ptr_vector<app>& aux_vars = pt.get_aux_vars(r);
-    vars.append(aux_vars.size(), aux_vars.c_ptr());
+    vars.append(aux_vars.size(), aux_vars.data());
 
     // skolems of the pob
     n.get_skolems(vars);
@@ -3749,7 +4073,7 @@ bool context::create_children(pob& n, datalog::rule const& r,
         kid_order.reverse();
     }
     else if (m_children_order == CO_RANDOM) {
-        shuffle(kid_order.size(), kid_order.c_ptr(), m_random);
+        shuffle(kid_order.size(), kid_order.data(), m_random);
     }
 
     for (unsigned i = 0, sz = preds.size(); i < sz; ++i) {
@@ -3790,6 +4114,11 @@ bool context::create_children(pob& n, datalog::rule const& r,
                        !mdl.is_true(n.post())))
     { kid->reset_derivation(); }
 
+    if (kid->is_may_pob()) {
+        SASSERT(n.get_gas() > 0);
+        n.set_gas(n.get_gas() - 1);
+        kid->set_gas(n.get_gas() - 1);
+    }
     out.push_back(kid);
     m_stats.m_num_queries++;
     return true;
@@ -3800,7 +4129,7 @@ bool context::create_children(pob& n, datalog::rule const& r,
 
 void context::collect_statistics(statistics& st) const
 {
-	// m_params is not necessarily live when collect_statistics is called.
+    // m_params is not necessarily live when collect_statistics is called.
     m_pool0->collect_statistics(st);
     m_pool1->collect_statistics(st);
     m_pool2->collect_statistics(st);
@@ -3828,6 +4157,17 @@ void context::collect_statistics(statistics& st) const
     st.update("SPACER num lemmas", m_stats.m_num_lemmas);
     // -- number of restarts taken
     st.update("SPACER restarts", m_stats.m_num_restarts);
+    // -- number of time pob abstraction was invoked
+    st.update("SPACER conj", m_stats.m_num_conj);
+    st.update("SPACER conj success", m_stats.m_num_conj_success);
+    st.update("SPACER conj failed",
+              m_stats.m_num_conj_failed);
+    st.update("SPACER pob out of gas", m_stats.m_num_pob_ofg);
+    st.update("SPACER subsume pob", m_stats.m_num_subsume_pobs);
+    st.update("SPACER subsume failed", m_stats.m_num_subsume_pob_reachable);
+    st.update("SPACER subsume success", m_stats.m_num_subsume_pob_blckd);
+    st.update("SPACER concretize", m_stats.m_num_concretize);
+    st.update("SPACER non local gen", m_stats.m_non_local_gen);
 
     // -- time to initialize the rules
     st.update ("time.spacer.init_rules", m_init_rules_watch.get_seconds ());
@@ -3848,6 +4188,7 @@ void context::collect_statistics(statistics& st) const
     for (unsigned i = 0; i < m_lemma_generalizers.size(); ++i) {
         m_lemma_generalizers[i]->collect_statistics(st);
     }
+    m_lmma_cluster->collect_statistics(st);
 }
 
 void context::reset_statistics()
@@ -3865,6 +4206,7 @@ void context::reset_statistics()
         m_lemma_generalizers[i]->reset_statistics();
     }
 
+    m_lmma_cluster->reset_statistics();
     m_init_rules_watch.reset ();
     m_solve_watch.reset ();
     m_propagate_watch.reset ();
@@ -3893,7 +4235,7 @@ bool context::check_invariant(unsigned lvl, func_decl* fn)
     if (m.is_true(inv)) { return true; }
     pt.add_premises(m_rels, lvl, conj);
     conj.push_back(m.mk_not(inv));
-    expr_ref fml(m.mk_and(conj.size(), conj.c_ptr()), m);
+    expr_ref fml(m.mk_and(conj.size(), conj.data()), m);
     ctx->assert_expr(fml);
     lbool result = ctx->check_sat(0, nullptr);
     TRACE("spacer", tout << "Check invariant level: " << lvl << " " << result
@@ -3918,7 +4260,7 @@ expr_ref context::get_constraints (unsigned level)
         { args.push_back(m.mk_const(m_pm.o2n(r.sig(i), 0))); }
 
         expr_ref pred(m);
-        pred = m.mk_app(r.head (), r.sig_size(), args.c_ptr());
+        pred = m.mk_app(r.head (), r.sig_size(), args.data());
 
         constraints.push_back(m.mk_implies(pred, c));
     }
@@ -3950,8 +4292,6 @@ void context::add_constraint (expr *c, unsigned level)
 }
 
 void context::new_lemma_eh(pred_transformer &pt, lemma *lem) {
-    if (m_params.spacer_print_json().size())
-        m_json_marshaller.register_lemma(lem);
     bool handle=false;
     for (unsigned i = 0; i < m_callbacks.size(); i++) {
         handle|=m_callbacks[i]->new_lemma();
@@ -3964,7 +4304,7 @@ void context::new_lemma_eh(pred_transformer &pt, lemma *lem) {
         for (unsigned i = 0; i < pt.sig_size(); ++i) {
             args.push_back(m.mk_const(pt.get_manager().o2n(pt.sig(i), 0)));
         }
-        expr *app = m.mk_app(pt.head(), pt.sig_size(), args.c_ptr());
+        expr *app = m.mk_app(pt.head(), pt.sig_size(), args.data());
         expr *lemma = m.mk_implies(app, lem->get_expr());
         for (unsigned i = 0; i < m_callbacks.size(); i++) {
             if (m_callbacks[i]->new_lemma())
@@ -3973,10 +4313,7 @@ void context::new_lemma_eh(pred_transformer &pt, lemma *lem) {
     }
 }
 
-void context::new_pob_eh(pob *p) {
-    if (m_params.spacer_print_json().size())
-        m_json_marshaller.register_pob(p);
-}
+void context::new_pob_eh(pob *p) { }
 
 bool context::is_inductive() {
     // check that inductive level (F infinity) of the query predicate
@@ -3997,6 +4334,10 @@ inline bool pob_lt_proc::operator() (const pob *pn1, const pob *pn2) const
 
     if (n1.depth() != n2.depth()) { return n1.depth() < n2.depth(); }
 
+    if (n1.is_subsume() != n2.is_subsume()) { return n1.is_subsume(); }
+    if (n1.is_conjecture() != n2.is_conjecture()) { return n1.is_conjecture(); }
+
+    if (n1.get_gas() != n2.get_gas()) { return n1.get_gas() > n2.get_gas(); }
     // -- a more deterministic order of proof obligations in a queue
     // if (!n1.get_context ().get_params ().spacer_nondet_tie_break ())
     {
@@ -4025,13 +4366,12 @@ inline bool pob_lt_proc::operator() (const pob *pn1, const pob *pn2) const
         if (p1->get_id() != p2->get_id()) { return p1->get_id() < p2->get_id(); }
 
         if (n1.pt().head()->get_id() == n2.pt().head()->get_id()) {
-            IF_VERBOSE (1,
-                        verbose_stream ()
-                        << "dup: " << n1.pt ().head ()->get_name ()
-                        << "(" << n1.level () << ", " << n1.depth () << ") "
-                        << p1->get_id () << "\n";
+            IF_VERBOSE(1,
+                verbose_stream()
+                << "dup: " << n1.pt().head()->get_name()
+                << "(" << n1.level() << ", " << n1.depth() << ") "
+                << p1->get_id() << "\n";);
                         //<< " p1: " << mk_pp (const_cast<expr*>(p1), m) << "\n"
-                );
         }
 
         // XXX see comment below on identical nodes
@@ -4051,5 +4391,27 @@ inline bool pob_lt_proc::operator() (const pob *pn1, const pob *pn2) const
 }
 
 
-
+// set gas of each may parent to 0
+// TODO: close siblings as well. kids of a pob are not stored in the pob
+void context::close_all_may_parents(pob_ref node) {
+    pob_ref_vector to_do;
+    to_do.push_back(node.get());
+    while (to_do.size() != 0) {
+        pob_ref t = to_do.back();
+        t->set_gas(0);
+        if (t->is_may_pob()) {
+            t->close();
+        } else
+            break;
+        to_do.pop_back();
+        to_do.push_back(t->parent());
+    }
+}
+// construct a simplified version of the post
+void pob::get_post_simplified(expr_ref_vector &pob_cube) {
+    pob_cube.reset();
+    pob_cube.push_back(m_post);
+    flatten_and(pob_cube);
+    simplify_bounds(pob_cube);
+}
 }

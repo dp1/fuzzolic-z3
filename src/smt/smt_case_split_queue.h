@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef SMT_CASE_SPLIT_QUEUE_H_
-#define SMT_CASE_SPLIT_QUEUE_H_
+#pragma once
 
 #include "smt/smt_types.h"
 #include "util/heap.h"
@@ -46,7 +45,7 @@ namespace smt {
         virtual void pop_scope(unsigned num_scopes) = 0;
         virtual void next_case_split(bool_var & next, lbool & phase) = 0;
         virtual void display(std::ostream & out) = 0;
-        virtual ~case_split_queue() {}
+        virtual ~case_split_queue() = default;
 
         // theory-aware branching hint
         virtual void add_theory_aware_branching_info(bool_var v, double priority, lbool phase) {}
@@ -55,5 +54,4 @@ namespace smt {
     case_split_queue * mk_case_split_queue(context & ctx, smt_params & p);
 };
 
-#endif /* SMT_CASE_SPLIT_QUEUE_H_ */
 

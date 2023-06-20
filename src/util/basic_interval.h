@@ -21,8 +21,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef BASIC_INTERVAL_H_
-#define BASIC_INTERVAL_H_
+#pragma once
 
 template<typename numeral_manager, bool closed>
 class basic_interval_manager {
@@ -34,7 +33,6 @@ public:
         bound m_lower;
         bound m_upper;
     public:
-        interval() {}
         bound const & lower() const { return m_lower; }
         bound const & upper() const { return m_upper; }
         bound & lower() { return m_lower; }
@@ -360,4 +358,3 @@ public:
     }
 };
 
-#endif

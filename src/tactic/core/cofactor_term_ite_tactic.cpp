@@ -50,20 +50,17 @@ public:
         return alloc(cofactor_term_ite_tactic, m, m_params);
     }
 
-    ~cofactor_term_ite_tactic() override {}
-    void updt_params(params_ref const & p) override { m_params = p; m_elim_ite.updt_params(p); }
+    char const* name() const override { return "cofactor"; }
+    void updt_params(params_ref const & p) override { m_params.append(p); m_elim_ite.updt_params(m_params); }
     void collect_param_descrs(param_descrs & r) override { m_elim_ite.collect_param_descrs(r); }
     
     void  operator()(goal_ref const & g, goal_ref_buffer& result) override {
-        SASSERT(g->is_well_sorted());
         fail_if_proof_generation("cofactor-term-ite", g);
         fail_if_unsat_core_generation("cofactor-term-ite", g);
         tactic_report report("cofactor-term-ite", *g);
         process(*(g.get()));
         g->inc_depth();
         result.push_back(g.get());
-        TRACE("cofactor-term-ite", g->display(tout););
-        SASSERT(g->is_well_sorted());
     }
     
     void cleanup() override { return m_elim_ite.cleanup(); }

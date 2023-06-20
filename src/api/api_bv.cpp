@@ -102,6 +102,7 @@ Z3_ast Z3_API NAME(Z3_context c, unsigned i, Z3_ast n) {                \
     MK_BV_PUNARY(Z3_mk_sign_ext, OP_SIGN_EXT);
     MK_BV_PUNARY(Z3_mk_zero_ext, OP_ZERO_EXT);
     MK_BV_PUNARY(Z3_mk_repeat,   OP_REPEAT);
+    MK_BV_PUNARY(Z3_mk_bit2bool,   OP_BIT2BOOL);
     MK_BV_PUNARY(Z3_mk_rotate_left, OP_ROTATE_LEFT);
     MK_BV_PUNARY(Z3_mk_rotate_right, OP_ROTATE_RIGHT);
     MK_BV_PUNARY(Z3_mk_int2bv, OP_INT2BV);
@@ -117,7 +118,8 @@ Z3_ast Z3_API NAME(Z3_context c, unsigned i, Z3_ast n) {                \
             Z3_sort s = Z3_get_sort(c, n);
             unsigned sz = Z3_get_bv_sort_size(c, s);
             rational max_bound = power(rational(2), sz);
-            Z3_ast bound = Z3_mk_numeral(c, max_bound.to_string().c_str(), int_s);
+            auto str = max_bound.to_string();
+            Z3_ast bound = Z3_mk_numeral(c, str.c_str(), int_s);
             Z3_inc_ref(c, bound);
             Z3_ast zero = Z3_mk_int(c, 0, s);
             Z3_inc_ref(c, zero);

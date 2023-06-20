@@ -79,7 +79,8 @@ void prop_solver::add_level()
     unsigned idx = level_cnt();
     std::stringstream name;
     name << m_name << "#level_" << idx;
-    func_decl * lev_pred = m.mk_fresh_func_decl(name.str().c_str(), 0, nullptr, m.mk_bool_sort());
+    auto str = name.str();
+    func_decl * lev_pred = m.mk_fresh_func_decl(str.c_str(), 0, nullptr, m.mk_bool_sort());
     m_level_preds.push_back(lev_pred);
 
     app_ref pos_la(m.mk_const(lev_pred), m);
@@ -142,7 +143,7 @@ lbool prop_solver::mss(expr_ref_vector &hard, expr_ref_vector &soft) {
     iuc_solver::scoped_mk_proxy _p_(*m_ctx, hard);
     unsigned hard_sz = hard.size();
 
-    lbool res = m_ctx->check_sat(hard.size(), hard.c_ptr());
+    lbool res = m_ctx->check_sat(hard.size(), hard.data());
     // bail out if hard constraints are not sat, or if there are no
     // soft constraints
     if (res != l_true || soft.empty()) {return res;}
@@ -201,7 +202,7 @@ lbool prop_solver::mss(expr_ref_vector &hard, expr_ref_vector &soft) {
 
         // -- grow the set of backbone literals
         for (;j < hard.size(); ++j) {
-            res = m_ctx->check_sat(j+1, hard.c_ptr());
+            res = m_ctx->check_sat(j+1, hard.data());
             if (res == l_false) {
                 // -- flip non-true literal to be false
                 hard[j] = mk_not(m, hard.get(j));
@@ -362,10 +363,10 @@ lbool prop_solver::check_assumptions(const expr_ref_vector & _hard,
     // current clients expect that flattening of HARD  is
     // done implicitly during check_assumptions
     expr_ref_vector hard(m);
-    hard.append(_hard.size(), _hard.c_ptr());
+    hard.append(_hard.size(), _hard.data());
     flatten_and(hard);
 
-    shuffle(hard.size(), hard.c_ptr(), m_random);
+    shuffle(hard.size(), hard.data(), m_random);
 
     m_ctx = m_contexts [solver_id == 0 ? 0 : 0 /* 1 */].get();
 

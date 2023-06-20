@@ -17,8 +17,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef NLSAT_SCOPED_LITERAL_VECTOR_H_
-#define NLSAT_SCOPED_LITERAL_VECTOR_H_
+#pragma once
 
 #include "nlsat/nlsat_solver.h"
 
@@ -48,7 +47,7 @@ namespace nlsat {
             m_solver.dec_ref(m_lits[i]);
             m_lits[i] = l;
         }
-        literal const * c_ptr() const { return m_lits.c_ptr(); }
+        literal const * data() const { return m_lits.data(); }
         literal const * begin() const { return m_lits.begin(); }
         literal const * end() const { return m_lits.end(); }
         void shrink(unsigned new_sz) {
@@ -66,7 +65,7 @@ namespace nlsat {
                 push_back(ls[i]);
         }
         void append(scoped_literal_vector const& ls) {
-            append(ls.size(), ls.c_ptr());
+            append(ls.size(), ls.data());
         }
         void swap(scoped_literal_vector& other) {
             SASSERT(&m_solver == &other.m_solver);
@@ -94,4 +93,3 @@ namespace nlsat {
     };
 };
 
-#endif

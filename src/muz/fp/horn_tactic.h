@@ -13,11 +13,32 @@ Author:
 
     Nikolaj Bjorner (nbjorner) 2012-11-16.
 
-Revision History:
+Tactic Documentation:
+
+## Tactic horn
+
+### Short Description
+
+Solve a set of Horn clauses using the SPACER engine.
+
+### Long Description
+
+The SPACER engine is specialized to solving Constrained Horn Clauses.
+This tactic instructs 
+
+## Tactic horn-simplify
+
+### Short Description
+
+Apply pre-processing simplification rules to a set of Horn clauses
+
+### Long Description
+This tactic exposes pre-processing simplification rules for Constrained Horn Clauses.
+They include a repertoire of simplification options that can be controlled by toggling
+the `fp` parameters.
 
 --*/
-#ifndef HORN_TACTIC_H_
-#define HORN_TACTIC_H_
+#pragma once
 
 #include "util/params.h"
 class ast_manager;
@@ -32,4 +53,3 @@ tactic * mk_horn_simplify_tactic(ast_manager & m, params_ref const & p = params_
 /*
   ADD_TACTIC("horn-simplify", "simplify horn clauses.", "mk_horn_simplify_tactic(m, p)")
 */
-#endif

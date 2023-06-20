@@ -21,58 +21,77 @@ def mk_dir(d):
     if not os.path.exists(d):
         os.makedirs(d)
 
+os_info = {  'ubuntu-latest' : ('so', 'linux-x64'),
+             'ubuntu-18' : ('so', 'linux-x64'),
+             'ubuntu-20' : ('so', 'linux-x64'),
+             'glibc-2.31' : ('so', 'linux-x64'),
+             'x64-win' : ('dll', 'win-x64'),
+             'x86-win' : ('dll', 'win-x86'),
+             'osx' : ('dylib', 'osx-x64'),
+             'debian' : ('so', 'linux-x64') }
 
-os_info = {"z64-ubuntu-14" : ('so', 'ubuntu.14.04-x64'),
-           'ubuntu-16' : ('so', 'ubuntu-x64'),
-           'x64-win' : ('dll', 'win-x64'),
-# Skip x86 as I can't get dotnet build to produce AnyCPU TargetPlatform           
-#          'x86-win' : ('dll', 'win-x86'),
-           'osx' : ('dylib', 'macos'),
-           'debian' : ('so', 'debian.8-x64') }
+        
 
-def classify_package(f):
+def classify_package(f, arch):
     for os_name in os_info:
         if os_name in f:
             ext, dst = os_info[os_name]
             return os_name, f[:-4], ext, dst
+    print("Could not classify", f)
     return None
 
-
-def unpack(packages):
+def replace(src, dst):
+    try:
+        os.remove(dst)
+    except:
+        shutil.move(src, dst)
+    
+def unpack(packages, symbols, arch):
     # unzip files in packages
     # out
     # +- runtimes
     #    +- win-x64
     #    +- win-x86
-    #    +- ubuntu.16.04-x64
-    #    +- ubuntu.14.04-x64
-    #    +- debian.8-x64
-    #    +- macos
+    #    +- linux-x64
+    #    +- osx-x64
     # +
+    tmp = "tmp" if not symbols else "tmpsym"
     for f in os.listdir(packages):
         print(f)
-        if f.endswith(".zip") and classify_package(f):
-            os_name, package_dir, ext, dst = classify_package(f)
+        if f.endswith(".zip") and classify_package(f, arch):
+            os_name, package_dir, ext, dst = classify_package(f, arch)
             path = os.path.abspath(os.path.join(packages, f))
             zip_ref = zipfile.ZipFile(path, 'r')
-            zip_ref.extract("%s/bin/libz3.%s" % (package_dir, ext), "tmp")
-            mk_dir("out/runtimes/%s/native" % dst)
-            shutil.move("tmp/%s/bin/libz3.%s" % (package_dir, ext), "out/runtimes/%s/native/." % dst)
-            if "x64-win" in f:
-                mk_dir("out/lib/netstandard1.4/")
-                for b in ["Microsoft.Z3.dll"]:
-                    zip_ref.extract("%s/bin/%s" % (package_dir, b), "tmp")
-                    shutil.move("tmp/%s/bin/%s" % (package_dir, b), "out/lib/netstandard1.4/%s" % b)
+            zip_ref.extract(f"{package_dir}/bin/libz3.{ext}", f"{tmp}")
+            mk_dir(f"out/runtimes/{dst}/native")
+            replace(f"{tmp}/{package_dir}/bin/libz3.{ext}", f"out/runtimes/{dst}/native/libz3.{ext}")            
+            if "x64-win" in f or "x86-win" in f:
+                mk_dir("out/lib/netstandard2.0/")
+                if symbols:
+                    zip_ref.extract(f"{package_dir}/bin/libz3.pdb", f"{tmp}")
+                    replace(f"{tmp}/{package_dir}/bin/libz3.pdb", f"out/runtimes/{dst}/native/libz3.pdb") 
+                files = ["Microsoft.Z3.dll"]                
+                if symbols:
+                    files += ["Microsoft.Z3.pdb", "Microsoft.Z3.xml"]
+                for b in files:
+                    zip_ref.extract(f"{package_dir}/bin/{b}", f"{tmp}")
+                    replace(f"{tmp}/{package_dir}/bin/{b}", f"out/lib/netstandard2.0/{b}")
 
-def mk_targets():
+def mk_targets(source_root):
     mk_dir("out/build")
-    shutil.copy("../src/api/dotnet/Microsoft.Z3.targets.in", "out/build/Microsoft.Z3.targets")
+    shutil.copy(f"{source_root}/src/api/dotnet/Microsoft.Z3.targets.in", "out/build/Microsoft.Z3.targets")
+
+def mk_icon(source_root):
+    mk_dir("out/content")
+    shutil.copy(f"{source_root}/resources/icon.jpg", "out/content/icon.jpg")
+
     
-def create_nuget_spec(release_version, release_commit):
+def create_nuget_spec(version, repo, branch, commit, symbols, arch):
+    arch = f".{arch}" if arch == "x86" else ""
     contents = """<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
     <metadata>
-        <id>Microsoft.Z3.x64</id>
+        <id>Microsoft.Z3{4}</id>
         <version>{0}</version>
         <authors>Microsoft</authors>
         <description>
@@ -83,78 +102,49 @@ Linux Dependencies:
         </description>
         <copyright>&#169; Microsoft Corporation. All rights reserved.</copyright>
         <tags>smt constraint solver theorem prover</tags>
-        <iconUrl>https://raw.githubusercontent.com/Z3Prover/z3/{1}/resources/icon.jpg</iconUrl>
+        <icon>content/icon.jpg</icon>
         <projectUrl>https://github.com/Z3Prover/z3</projectUrl>
-        <licenseUrl>https://raw.githubusercontent.com/Z3Prover/z3/{1}/LICENSE.txt</licenseUrl>
-        <repository type="git" url="https://github.com/Z3Prover/z3.git" branch="master" commit="{1}" />
+        <license type="expression">MIT</license>
+        <repository type="git" url="{1}" branch="{2}" commit="{3}" />
         <requireLicenseAcceptance>true</requireLicenseAcceptance>
         <language>en</language>
+        <dependencies>
+            <group targetFramework=".netstandard2.0" />
+        </dependencies>
     </metadata>
-</package>""".format(release_version, release_commit)
+</package>""".format(version, repo, branch, commit, arch)
     print(contents)
-    with open("out/Microsoft.Z3.x64.nuspec", 'w') as f:
+    sym = "sym." if symbols else ""
+    file = f"out/Microsoft.Z3{arch}.{sym}nuspec"
+    print(file)
+    with open(file, 'w') as f:
         f.write(contents)
+
+class Env:
+    def __init__(self, argv):
+        self.packages = argv[1]
+        self.version = argv[2]
+        self.repo = argv[3]
+        self.branch = argv[4]
+        self.commit = argv[5]
+        self.source_root = argv[6]
+        self.symbols = False
+        self.arch = "x64"
+        if len(argv) > 7 and "symbols" == argv[7]:
+            self.symbols = True
+        if len(argv) > 8:
+            self.arch = argv[8]
+
+    def create(self):
+        mk_dir(self.packages)
+        unpack(self.packages, self.symbols, self.arch)
+        mk_targets(self.source_root)
+        mk_icon(self.source_root)
+        create_nuget_spec(self.version, self.repo, self.branch, self.commit, self.symbols, self.arch)
         
-nuget_sign_input = """
-{
-  "Version": "1.0.0",
-  "SignBatches"
-  :
-  [
-   {
-    "SourceLocationType": "UNC",
-    "SourceRootDirectory": "%s",
-    "DestinationLocationType": "UNC",
-    "DestinationRootDirectory": "%s",
-    "SignRequestFiles": [
-     {
-      "CustomerCorrelationId": "42fc9577-af9e-4ac9-995d-1788d8721d17",
-      "SourceLocation": "Microsoft.Z3.x64.%s.nupkg",
-      "DestinationLocation": "Microsoft.Z3.x64.%s.nupkg"
-     }
-    ],
-    "SigningInfo": {
-     "Operations": [
-      {
-       "KeyCode" : "CP-401405",
-       "OperationCode" : "NuGetSign",
-       "Parameters" : {},
-       "ToolName" : "sign",
-       "ToolVersion" : "1.0"
-      },
-      {
-       "KeyCode" : "CP-401405",
-       "OperationCode" : "NuGetVerify",
-       "Parameters" : {},
-       "ToolName" : "sign",
-       "ToolVersion" : "1.0"
-      }
-     ]
-    }
-   }
-  ]
-}"""
-
-def create_sign_input(release_version):
-    package_name = "Microsoft.Z3.x64.%s.nupkg" % release_version
-    input_file = "out/nuget_sign_input.json"
-    output_path = os.path.abspath("out").replace("\\","\\\\") 
-    with open(input_file, 'w') as f:
-        f.write(nuget_sign_input % (output_path, output_path, release_version, release_version))
-    
-    
 def main():
-    packages = sys.argv[1]
-    release_version = sys.argv[2]
-    release_commit = sys.argv[3]
-    print(packages)
-    mk_dir(packages)    
-    unpack(packages)
-    mk_targets()
-    create_nuget_spec(release_version, release_commit)
-    create_sign_input(release_version)
-#    create_nuget_package()
-#    sign_nuget_package(release_version)
-
+    env = Env(sys.argv)
+    print(env.packages)
+    env.create()
 
 main()

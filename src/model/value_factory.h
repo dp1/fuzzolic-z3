@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef VALUE_FACTORY_H_
-#define VALUE_FACTORY_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "util/obj_hashtable.h"
@@ -203,7 +202,7 @@ public:
     }
 
     void register_value(expr * n) override {
-        sort * s = this->m_manager.get_sort(n);
+        sort * s = n->get_sort();
         value_set * set  = get_value_set(s);
         if (!set->m_values.contains(n)) {
             m_values.push_back(n);
@@ -231,7 +230,6 @@ class user_sort_factory : public simple_factory<unsigned> {
     app * mk_value_core(unsigned const & val, sort * s) override;
 public:
     user_sort_factory(ast_manager & m);
-    ~user_sort_factory() override {}
 
     /**
        \brief Make the universe of \c s finite, by preventing new
@@ -266,5 +264,4 @@ public:
     void register_value(expr * n) override;
 };
 
-#endif /* VALUE_FACTORY_H_ */
 

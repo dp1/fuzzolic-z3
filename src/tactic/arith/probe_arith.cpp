@@ -22,6 +22,8 @@ Revision History:
 #include "ast/arith_decl_plugin.h"
 #include "tactic/goal_util.h"
 
+namespace {
+
 class arith_degree_probe : public probe {
     struct proc {
         ast_manager &            m;
@@ -134,7 +136,7 @@ struct has_nlmul {
     has_nlmul(ast_manager& m):m(m), a(m) {}
     
     void throw_found(expr* e) {
-        TRACE("probe", tout << expr_ref(e, m) << ": " << sort_ref(m.get_sort(e), m) << "\n";);
+        TRACE("probe", tout << expr_ref(e, m) << ": " << sort_ref(e->get_sort(), m) << "\n";);
         throw found();
     }
 
@@ -153,7 +155,7 @@ struct has_nlmul {
             case OP_IDIV: case OP_DIV: case OP_REM: case OP_MOD:
                 if (!a.is_numeral(n->get_arg(1)))
                     throw_found(n);
-				break;
+                break;
             case OP_POWER:
                 throw_found(n);
             default:
@@ -162,6 +164,8 @@ struct has_nlmul {
         }
     }
 };
+
+}
 
 probe * mk_arith_avg_degree_probe() {
     return alloc(arith_degree_probe, true);
@@ -179,6 +183,7 @@ probe * mk_arith_max_bw_probe() {
     return alloc(arith_bw_probe, false);
 }
 
+namespace {
 struct is_non_qflira_functor {
     struct found {};
     ast_manager & m;
@@ -351,7 +356,7 @@ static bool is_lp(goal const & g) {
         while (m.is_not(f, f))
             sign = !sign;
         if (m.is_eq(f) && !sign) {
-            if (m.get_sort(to_app(f)->get_arg(0))->get_family_id() != u.get_family_id())
+            if (to_app(f)->get_arg(0)->get_sort()->get_family_id() != u.get_family_id())
                 return false;
             continue;
         }
@@ -392,6 +397,8 @@ public:
     }
 };
 
+}
+
 probe * mk_is_qflia_probe() {
     return alloc(is_qflia_probe);
 }
@@ -417,6 +424,8 @@ probe * mk_is_mip_probe() {
 }
 
 
+namespace {
+
 struct is_non_nira_functor {
     struct found {};
     ast_manager & m;
@@ -429,7 +438,7 @@ struct is_non_nira_functor {
     is_non_nira_functor(ast_manager & _m, bool _int, bool _real, bool _quant, bool linear):m(_m), u(m), m_int(_int), m_real(_real), m_quant(_quant), m_linear(linear) {}
 
     void throw_found(expr* e) {
-        TRACE("probe", tout << expr_ref(e, m) << ": " << sort_ref(m.get_sort(e), m) << "\n";);
+        TRACE("probe", tout << expr_ref(e, m) << ": " << sort_ref(e->get_sort(), m) << "\n";);
         throw found();
     }
 
@@ -487,6 +496,8 @@ struct is_non_nira_functor {
                     throw_found(n); 
                 if (m_linear && u.is_numeral(n->get_arg(1), r) && r.is_zero())
                     throw_found(n); 
+                if (m_linear && u.is_numeral(n->get_arg(1), r) && !r.is_zero())
+                    return;
                 if (!is_ground(n->get_arg(0)) || !is_ground(n->get_arg(1))) 
                     throw_found(n);
                 return;
@@ -500,6 +511,8 @@ struct is_non_nira_functor {
             case OP_POWER:
                 if (m_linear)
                     throw_found(n);
+                //if (!u.is_numeral(n->get_arg(0), r) || !r.is_unsigned() || r.is_zero())
+                //    throw_found(n);
                 return;
             case OP_IRRATIONAL_ALGEBRAIC_NUM:
                 if (m_linear || !m_real)
@@ -694,6 +707,8 @@ public:
         return is_qfufnra(g);
     }
 };
+
+}
 
 probe * mk_is_qfnia_probe() {
     return alloc(is_qfnia_probe);

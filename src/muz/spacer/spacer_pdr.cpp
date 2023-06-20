@@ -128,7 +128,7 @@ void model_search::add_leaf(model_node* _n) {
     model_node& n = *_n;
     SASSERT(n.children().empty());
     model_nodes ns;
-    model_nodes& nodes = cache(n).insert_if_not_there2(n.post(), ns)->get_data().m_value;
+    model_nodes& nodes = cache(n).insert_if_not_there(n.post(), ns);
     if (nodes.contains(&n)) return;
 
     nodes.push_back(_n);
@@ -340,7 +340,7 @@ bool context::gpdr_create_split_children(pob &n, const datalog::rule &r,
         kid_order.reverse();
     }
     else if (m_children_order == CO_RANDOM) {
-        shuffle(kid_order.size(), kid_order.c_ptr(), m_random);
+        shuffle(kid_order.size(), kid_order.data(), m_random);
     }
 
 

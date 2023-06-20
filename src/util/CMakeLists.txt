@@ -51,22 +51,27 @@ z3_add_component(util
     small_object_allocator.cpp
     smt2_util.cpp
     stack.cpp
+    state_graph.cpp
     statistics.cpp
     symbol.cpp
+    tbv.cpp
     timeit.cpp
     timeout.cpp
     trace.cpp
     util.cpp
     warning.cpp
     z3_exception.cpp
+    zstring.cpp
   EXTRA_REGISTER_MODULE_HEADERS
     env_params.h
   MEMORY_INIT_FINALIZER_HEADERS
     debug.h
     gparams.h
+    scoped_timer.h
     prime_generator.h
     rational.h
     rlimit.h
+    state_graph.h
     symbol.h
     trace.h
 )

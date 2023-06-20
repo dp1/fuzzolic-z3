@@ -20,9 +20,6 @@ Revision History:
 #include <sstream>
 #include <sys/types.h>
 #include <sys/stat.h>
-#ifdef _WINDOWS
-#include <windows.h>
-#endif
 #include "ast/ast_pp.h"
 #include "ast/rewriter/bool_rewriter.h"
 #include "ast/for_each_expr.h"
@@ -31,6 +28,10 @@ Revision History:
 #include "muz/base/dl_rule.h"
 #include "muz/base/dl_util.h"
 #include "util/stopwatch.h"
+#ifdef _WINDOWS
+#include <windows.h>
+#endif
+
 #ifndef __STDC_FORMAT_MACROS
 #define __STDC_FORMAT_MACROS
 #endif
@@ -106,7 +107,7 @@ namespace datalog {
                 new_args.push_back(new_var);
             }
         }
-        new_pred = m.mk_app(pred->get_decl(), new_args.size(), new_args.c_ptr());
+        new_pred = m.mk_app(pred->get_decl(), new_args.size(), new_args.data());
     }
 
     void apply_subst(expr_ref_vector& tgt, expr_ref_vector const& sub) {
@@ -115,7 +116,7 @@ namespace datalog {
         expr_ref tmp(m);
         for (unsigned i = 0; i < tgt.size(); ++i) {
             if (tgt[i].get()) {
-                tgt[i] = vs(tgt[i].get(), sub.size(), sub.c_ptr());
+                tgt[i] = vs(tgt[i].get(), sub.size(), sub.data());
             }
             else {
                 tgt[i] = sub[i];
@@ -280,14 +281,19 @@ namespace datalog {
         return get_max_var(has_var);
     }
 
-    void del_rule(horn_subsume_model_converter* mc, rule& r, bool unreachable) {
+    void del_rule(horn_subsume_model_converter* mc, rule& r, lbool unreachable) {
         if (mc) {
             ast_manager& m = mc->get_manager();
             expr_ref_vector body(m);
-            if (unreachable) {
+            TRACE("dl", tout << "unreachable: " << unreachable << " " << r.get_decl()->get_name() << "\n");
+            switch (unreachable) {
+            case l_true:
+                body.push_back(m.mk_true());
+                break;
+            case l_false:
                 body.push_back(m.mk_false());
-            }
-            else {
+                break;
+            default:
                 for (unsigned i = 0; i < r.get_tail_size(); ++i) {
                     if (r.is_neg_tail(i)) {
                         body.push_back(m.mk_not(r.get_tail(i)));
@@ -296,14 +302,15 @@ namespace datalog {
                         body.push_back(r.get_tail(i));
                     }
                 }
+                break;
             }
-            TRACE("dl_dr", 
+            TRACE("dl", 
                   tout << mk_pp(r.get_head(), m) << " :- \n";
                   for (unsigned i = 0; i < body.size(); ++i) {
-                      tout << mk_pp(body[i].get(), m) << "\n";
+                      tout << mk_pp(body.get(i), m) << "\n";
                   });
                       
-            mc->insert(r.get_head(), body.size(), body.c_ptr());
+            mc->insert(r.get_head(), body.size(), body.data());
         }
     }
 
@@ -342,13 +349,13 @@ namespace datalog {
               tout << "\n";
               ); 
 
-        pr = m.mk_hyper_resolve(2, premises.c_ptr(), fml3, positions, substs);
+        pr = m.mk_hyper_resolve(2, premises.data(), fml3, positions, substs);
         pc->insert(pr);
     }
 
     void resolve_rule(rule_manager& rm, rule const& r1, rule const& r2, unsigned idx, 
                       expr_ref_vector const& s1, expr_ref_vector const& s2, rule& res) {
-        if (!r1.get_proof()) {
+        if (!r1.get_proof() || !r2.get_proof()) {
             return;
         }
         SASSERT(r2.get_proof());
@@ -380,7 +387,7 @@ namespace datalog {
               tout << "\n";
               ); 
 
-        pr = m.mk_hyper_resolve(2, premises.c_ptr(), fml, positions, substs);
+        pr = m.mk_hyper_resolve(2, premises.data(), fml, positions, substs);
         res.set_proof(m, pr);
     }
 
@@ -420,32 +427,31 @@ namespace datalog {
 
 
 
-    void reverse_renaming(ast_manager & m, const expr_ref_vector & src, expr_ref_vector & tgt) {
+    void reverse_renaming(const var_ref_vector & src, var_ref_vector & tgt) {
+        ast_manager& m = src.m();
         SASSERT(tgt.empty());
         unsigned src_sz = src.size();
-        unsigned src_ofs = src_sz-1;
+        unsigned src_ofs = src_sz - 1;
 
         unsigned max_var_idx = 0;
         for(unsigned i=0; i<src_sz; i++) {
-            if(!src[i]) {
+            if (!src[i]) {
                 continue;
             }
-            SASSERT(is_var(src[i]));
-            unsigned var_idx = to_var(src[i])->get_idx();
-            if(var_idx>max_var_idx) {
-                max_var_idx=var_idx;
+            unsigned var_idx = src[i]->get_idx();
+            if (var_idx > max_var_idx) {
+                max_var_idx = var_idx;
             }
         }
 
         unsigned tgt_sz = max_var_idx+1;
-        unsigned tgt_ofs = tgt_sz-1;
+        unsigned tgt_ofs = tgt_sz - 1;
         tgt.resize(tgt_sz, nullptr);
-        for(unsigned i=0; i<src_sz; i++) {
-            expr * e = src[src_ofs-i];
-            if(!e) {
+        for(unsigned i = 0; i < src_sz; i++) {
+            var* v = src[src_ofs-i];
+            if (!v) {
                 continue;
             }
-            var * v = to_var(e);
             unsigned var_idx = v->get_idx();
             tgt[tgt_ofs-var_idx] = m.mk_var(i, v->get_sort());
         }

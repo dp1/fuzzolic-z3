@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef MAXIMIZE_AC_SHARING_H_
-#define MAXIMIZE_AC_SHARING_H_
+#pragma once
 
 #include "util/hashtable.h"
 #include "util/region.h"
@@ -47,7 +46,7 @@ class maximize_ac_sharing : public default_rewriter_cfg {
 
         entry(func_decl * d = nullptr, expr * arg1 = nullptr, expr * arg2 = nullptr):m_decl(d), m_arg1(arg1), m_arg2(arg2) {
             SASSERT((d == 0 && arg1 == 0 && arg2 == 0) || (d != 0 && arg1 != 0 && arg2 != 0));
-            if (arg1->get_id() > arg2->get_id())
+            if (arg1 && arg2 && arg1->get_id() > arg2->get_id())
                 std::swap(m_arg1, m_arg2);
         }
 
@@ -121,5 +120,4 @@ public:
     void reset() { m_cfg.reset(); }
 };
 
-#endif /* MAXIMIZE_AC_SHARING_H_ */
 

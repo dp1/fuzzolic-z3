@@ -16,13 +16,13 @@ Author:
 Revision History:
 
 --*/
-#ifndef SMT_TYPES_H_
-#define SMT_TYPES_H_
+#pragma once
 
 #include "util/list.h"
 #include "util/vector.h"
 #include "util/hashtable.h"
 #include "util/lbool.h"
+#include "util/sat_literal.h"
 
 class model;
 
@@ -30,9 +30,9 @@ namespace smt {
     /**
        \brief A boolean variable is just an integer.
     */
-    typedef int bool_var;
+    typedef sat::bool_var bool_var;
     
-    const bool_var null_bool_var  = -1;
+    const bool_var null_bool_var  = sat::null_bool_var;
     const bool_var true_bool_var  = 0;
     const bool_var first_bool_var = 1;
     
@@ -47,8 +47,6 @@ namespace smt {
     typedef ptr_vector<enode> enode_vector;
     typedef std::pair<enode *, enode *> enode_pair;
     typedef svector<enode_pair> enode_pair_vector;
-
-    class context;
 
     class theory;
 
@@ -76,5 +74,4 @@ namespace smt {
 
 };
 
-#endif /* SMT_TYPES_H_ */
 

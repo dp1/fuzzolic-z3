@@ -18,8 +18,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef NLSAT_SOLVER_H_
-#define NLSAT_SOLVER_H_
+#pragma once
 
 #include "nlsat/nlsat_types.h"
 #include "util/params.h"
@@ -33,6 +32,7 @@ namespace nlsat {
 
     class display_assumption_proc {
     public:
+        virtual ~display_assumption_proc() = default;
         virtual std::ostream& operator()(std::ostream& out, assumption a) const = 0;
     };
 
@@ -265,4 +265,3 @@ namespace nlsat {
 
 };
 
-#endif

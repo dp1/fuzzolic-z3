@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef MPQ_H_
-#define MPQ_H_
+#pragma once
 
 #include "util/mpz.h"
 #include "util/trace.h"
@@ -27,17 +26,15 @@ class mpq {
     mpz m_den;
     friend class mpq_manager<true>;
     friend class mpq_manager<false>;
-    mpq & operator=(mpq const & other) { UNREACHABLE(); return *this; }
 public:
     mpq(int v):m_num(v), m_den(1) {}
     mpq():m_den(1) {}
-    mpq(mpq && other) : m_num(std::move(other.m_num)), m_den(std::move(other.m_den)) {}
-    void swap(mpq & other) { m_num.swap(other.m_num); m_den.swap(other.m_den); }
+    mpq(mpq &&) noexcept = default;
+    mpq & operator=(mpq&&) = default;
+    mpq & operator=(mpq const&) = delete;
     mpz const & numerator() const { return m_num; }
     mpz const & denominator() const { return m_den; }
 };
-
-inline void swap(mpq & m1, mpq & m2) { m1.swap(m2); }
 
 template<bool SYNCH = true>
 class mpq_manager : public mpz_manager<SYNCH> {
@@ -115,7 +112,7 @@ public:
     static bool precise() { return true; }
     static bool field() { return true; }
 
-    mpq_manager();
+    mpq_manager() = default;
 
     ~mpq_manager();
 
@@ -136,10 +133,17 @@ public:
 
     void del(mpz & a) { mpz_manager<SYNCH>::del(a); }
 
+
     void del(mpq & a) {
         del(a.m_num);
         del(a.m_den);
     }
+
+    static void del(mpq_manager* m, mpq & a) {
+        mpz_manager<SYNCH>::del(m, a.m_num);
+        mpz_manager<SYNCH>::del(m, a.m_den);
+    }
+
     
     void get_numerator(mpq const & a, mpz & n) { set(n, a.m_num); }
 
@@ -225,18 +229,31 @@ public:
     
     void add(mpq const & a, mpq const & b, mpq & c) {
         STRACE("mpq", tout << "[mpq] " << to_string(a) << " + " << to_string(b) << " == ";); 
-        if (is_int(a) && is_int(b)) {
+        if (is_zero(b)) {
+            set(c, a);
+        }
+        else if (is_zero(a)) {
+            set(c, b);
+        }
+        else if (is_int(a) && is_int(b)) {
             mpz_manager<SYNCH>::add(a.m_num, b.m_num, c.m_num);
             reset_denominator(c);
         }
-        else
+        else {
             rat_add(a, b, c);
+        }
         STRACE("mpq", tout << to_string(c) << "\n";);
     }
 
     void add(mpq const & a, mpz const & b, mpq & c) {
         STRACE("mpq", tout << "[mpq] " << to_string(a) << " + " << to_string(b) << " == ";); 
-        if (is_int(a)) {
+        if (is_zero(b)) {
+            set(c, a);
+        }
+        else if (is_zero(a)) {
+            set(c, b);
+        }
+        else if (is_int(a)) {
             mpz_manager<SYNCH>::add(a.m_num, b, c.m_num);
             reset_denominator(c);
         }
@@ -312,6 +329,9 @@ public:
         else if (is_minus_one(b)) {
             sub(a, c, d);
         }
+        else if (is_zero(b) || is_zero(c)) {
+            set(d, a);
+        }
         else {
             if (SYNCH) {
                 mpq tmp;
@@ -333,6 +353,9 @@ public:
         }
         else if (is_minus_one(b)) {
             sub(a, c, d);
+        }
+        else if (is_zero(b) || is_zero(c)) {
+            set(d, a);
         }
         else {
             if (SYNCH) {
@@ -409,6 +432,10 @@ public:
 
     void div(mpq const & a, mpq const & b, mpq & c) {
         STRACE("mpq", tout << "[mpq] " << to_string(a) << " / " << to_string(b) << " == ";); 
+        if (is_zero(a) || is_one(b)) {
+            set(c, a);
+            return;
+        }
         if (&b == &c) {
             mpz tmp; // it is not safe to use c.m_num at this point.
             mul(a.m_num, b.m_den, tmp);
@@ -431,6 +458,10 @@ public:
 
     void div(mpq const & a, mpz const & b, mpq & c) {
         STRACE("mpq", tout << "[mpq] " << to_string(a) << " / " << to_string(b) << " == ";); 
+        if (is_zero(a) || is_one(b)) {
+            set(c, a);
+            return;
+        }
         set(c.m_num, a.m_num);
         mul(a.m_den, b, c.m_den);
         if (mpz_manager<SYNCH>::is_neg(b)) {
@@ -640,6 +671,8 @@ public:
     void set(mpq & a, int n, int d) {
         SASSERT(d != 0);
         if (d < 0) {
+            SASSERT(d != INT_MIN);
+            SASSERT(n != INT_MIN);
             n = -n;
             d = -d;
         }
@@ -764,6 +797,8 @@ public:
     unsigned storage_size(mpz const & a) { return mpz_manager<SYNCH>::size_info(a); }
     unsigned storage_size(mpq const & a) { return mpz_manager<SYNCH>::size_info(a.m_num) + mpz_manager<SYNCH>::size_info(a.m_den); }
 
+    bool get_bit(mpq const& a, unsigned index) { SASSERT(is_int(a) && !is_neg(a)); return mpz_manager<SYNCH>::get_bit(a.m_num, index); }
+
     /**
        \brief Return true if the number is a perfect square, and 
        store the square root in 'root'.
@@ -826,6 +861,3 @@ typedef mpq_manager<false> unsynch_mpq_manager;
 typedef _scoped_numeral<unsynch_mpq_manager> scoped_mpq;
 typedef _scoped_numeral<synch_mpq_manager> scoped_synch_mpq;
 typedef _scoped_numeral_vector<unsynch_mpq_manager> scoped_mpq_vector;
-
-#endif /* MPQ_H_ */
-

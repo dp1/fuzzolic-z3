@@ -20,6 +20,7 @@ Notes:
 #include "model/model_v2_pp.h"
 #include "tactic/tactical.h"
 #include "sat/tactic/goal2sat.h"
+#include "sat/tactic/sat2goal.h"
 #include "sat/sat_solver.h"
 #include "sat/sat_params.hpp"
 
@@ -29,14 +30,13 @@ class sat_tactic : public tactic {
         ast_manager &   m;
         goal2sat        m_goal2sat;
         sat2goal        m_sat2goal;
-        scoped_ptr<sat::solver_core>   m_solver;
+        scoped_ptr<sat::solver> m_solver;
         params_ref      m_params;
         
         imp(ast_manager & _m, params_ref const & p):
             m(_m),
             m_solver(alloc(sat::solver, p, m.limit())),
             m_params(p) {
-            SASSERT(!m.proofs_enabled());
             updt_params(p);
         }
         
@@ -47,16 +47,22 @@ class sat_tactic : public tactic {
             bool produce_core = g->unsat_core_enabled();
             TRACE("before_sat_solver", g->display(tout););
             g->elim_redundancies();
-
             atom2bool_var map(m);
             obj_map<expr, sat::literal> dep2asm;
             sat::literal_vector assumptions;
             m_goal2sat(*g, m_params, *m_solver, map, dep2asm);
-            TRACE("sat_solver_unknown", tout << "interpreted_atoms: " << map.interpreted_atoms() << "\n";
-                  for (auto const& kv : map) {
-                      if (!is_uninterp_const(kv.m_key))
-                          tout << mk_ismt2_pp(kv.m_key, m) << "\n";
-                  });
+            TRACE("sat", tout << "interpreted_atoms: " << m_goal2sat.has_interpreted_funs() << "\n";
+                  func_decl_ref_vector funs(m);
+                  m_goal2sat.get_interpreted_funs(funs);
+                  for (func_decl* f : funs) 
+                      tout << mk_ismt2_pp(f, m) << "\n";
+                  );
+
+            expr_ref_vector fmls_to_validate(m);
+            if (gparams::get_ref().get_bool("model_validate", false)) 
+                for (unsigned i = 0; i < g->size(); ++i) 
+                    fmls_to_validate.push_back(g->form(i));
+
             g->reset();
             g->m().compact_memory();
 
@@ -64,8 +70,12 @@ class sat_tactic : public tactic {
             IF_VERBOSE(TACTIC_VERBOSITY_LVL, m_solver->display_status(verbose_stream()););
             TRACE("sat_dimacs", m_solver->display_dimacs(tout););
             dep2assumptions(dep2asm, assumptions);
-            lbool r = m_solver->check(assumptions.size(), assumptions.c_ptr());
-            TRACE("sat", tout << "result of checking: " << r << " " << m_solver->get_reason_unknown() << "\n";);
+            lbool r = m_solver->check(assumptions.size(), assumptions.data());
+            TRACE("sat", tout << "result of checking: " << r << " "; 
+                  if (r == l_undef) tout << m_solver->get_reason_unknown(); tout << "\n";
+                  if (m_goal2sat.has_interpreted_funs()) tout << "has interpreted\n";);
+            if (r == l_undef)
+                g->set_reason_unknown(m_solver->get_reason_unknown());
             if (r == l_false) {
                 expr_dependency * lcore = nullptr;
                 if (produce_core) {
@@ -80,7 +90,7 @@ class sat_tactic : public tactic {
                 }
                 g->assert_expr(m.mk_false(), nullptr, lcore);
             }
-            else if (r == l_true && !map.interpreted_atoms()) {
+            else if (r == l_true && !m_goal2sat.has_interpreted_funs()) {
                 // register model
                 if (produce_models) {
                     model_ref md = alloc(model, m);
@@ -89,18 +99,31 @@ class sat_tactic : public tactic {
                     for (auto const& kv : map) {
                         expr * n   = kv.m_key;
                         sat::bool_var v = kv.m_value;
+                        if (!is_app(n))
+                            continue;
+                        app* a = to_app(n);
+                        if (!is_uninterp_const(a))
+                            continue;
                         TRACE("sat_tactic", tout << "extracting value of " << mk_ismt2_pp(n, m) << "\nvar: " << v << "\n";);
                         switch (sat::value_at(v, ll_m)) {
                         case l_true: 
-                            md->register_decl(to_app(n)->get_decl(), m.mk_true()); 
+                            md->register_decl(a->get_decl(), m.mk_true()); 
                             break;
                         case l_false:
-                            md->register_decl(to_app(n)->get_decl(), m.mk_false());
+                            md->register_decl(a->get_decl(), m.mk_false());
                             break;
                         default:
                             break;
                         }
                     }
+
+                    bool euf = m_goal2sat.has_euf();
+		    
+                    for (auto* f : fmls_to_validate) 
+                        if (!euf && md->is_false(f)) 
+                            IF_VERBOSE(0, verbose_stream() << "failed to validate: " << mk_pp(f, m) << "\n";);
+                    
+                    m_goal2sat.update_model(md);
                     TRACE("sat_tactic", model_v2_pp(tout, *md););
                     g->add(model2model_converter(md.get()));
                 }
@@ -114,6 +137,10 @@ class sat_tactic : public tactic {
                 ref<sat2goal::mc> mc;
                 m_sat2goal(*m_solver, map, m_params, *(g.get()), mc);
                 g->add(mc.get());
+                if (produce_core || m_goal2sat.has_interpreted_funs()) {
+                    // sat2goal does not preseve assumptions or assignments to interpreted atoms
+                    g->updt_prec(goal::OVER);
+                }
             }
             g->inc_depth();
             result.push_back(g.get());
@@ -163,7 +190,6 @@ public:
         m_imp(nullptr),
         m_params(p) {
         sat_params p1(p);
-        m_params.set_bool("xor_solver", p1.xor_solver());
     }
 
     tactic * translate(ast_manager & m) override {
@@ -174,11 +200,11 @@ public:
         SASSERT(m_imp == 0);
     }
 
+    char const* name() const override { return "sat"; }
+
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        sat_params p1(p);
-        m_params.set_bool("xor_solver", p1.xor_solver());
-        if (m_imp) m_imp->updt_params(p);
+        m_params.append(p);
+        if (m_imp) m_imp->updt_params(m_params);
     }
 
     void collect_param_descrs(param_descrs & r) override {
@@ -201,6 +227,7 @@ public:
         }
         catch (z3_exception& ex) {
             (void)ex;
+            proc.m_solver->collect_statistics(m_stats);
             TRACE("sat", tout << ex.msg() << "\n";);            
             throw;
         }
@@ -230,6 +257,7 @@ tactic * mk_sat_tactic(ast_manager & m, params_ref const & p) {
 tactic * mk_sat_preprocessor_tactic(ast_manager & m, params_ref const & p) {
     params_ref p_aux;
     p_aux.set_uint("max_conflicts", 0);
+    p_aux.set_bool("enable_pre_simplify", true);
     tactic * t = clean(using_params(mk_sat_tactic(m, p), p_aux));
     t->updt_params(p);
     return t;

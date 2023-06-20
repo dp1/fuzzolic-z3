@@ -21,8 +21,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef PROBE_H_
-#define PROBE_H_
+#pragma once
 
 #include "tactic/goal.h"
 
@@ -45,7 +44,7 @@ private:
 
 public:
     probe():m_ref_count(0) {}
-    virtual ~probe() {}
+    virtual ~probe() = default;
 
     void inc_ref() { ++m_ref_count; }
     void dec_ref() { SASSERT(m_ref_count > 0); --m_ref_count; if (m_ref_count == 0) dealloc(this); }
@@ -126,4 +125,3 @@ probe * mk_is_qfufbv_probe();
   ADD_PROBE("is-qfaufbv", "true if the goal is in QF_AUFBV.", "mk_is_qfaufbv_probe()")
 */
 
-#endif

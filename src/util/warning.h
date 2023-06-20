@@ -16,9 +16,8 @@ Author:
 Revision History:
 
 --*/
-#ifndef WARNING_H_
-#define WARNING_H_
-#include<iostream>
+#pragma once
+#include<ostream>
 #include<stdarg.h>
 
 void send_warnings_to_stdout(bool flag);
@@ -29,9 +28,10 @@ void set_error_stream(std::ostream* strm);
 
 void set_warning_stream(std::ostream* strm);
 
+std::ostream* warning_stream();
+
 void warning_msg(const char * msg, ...);
 
 void format2ostream(std::ostream& out, char const* fmt, va_list args);
 
-#endif /* WARNING_H_ */
 

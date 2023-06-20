@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef DL_CONTEXT_H_
-#define DL_CONTEXT_H_
+#pragma once
 
 #include "ast/arith_decl_plugin.h"
 #include "util/map.h"
@@ -31,7 +30,7 @@ Revision History:
 #include "util/statistics.h"
 #include "util/params.h"
 #include "util/trail.h"
-#include "tactic/model_converter.h"
+#include "ast/converters/model_converter.h"
 #include "model/model2expr.h"
 #include "smt/params/smt_params.h"
 #include "muz/base/dl_rule_transformer.h"
@@ -95,8 +94,8 @@ namespace datalog {
         relation_fact(ast_manager & m, unsigned sz) : app_ref_vector(m) { resize(sz); }
         relation_fact(context & ctx);
 
-        iterator begin() const { return c_ptr(); }
-        iterator end() const { return c_ptr()+size(); }
+        iterator begin() const { return data(); }
+        iterator end() const { return data()+size(); }
 
         relation_element operator[](unsigned i) const { return get(i); }
         el_proxy operator[](unsigned i) { return el_proxy(*this, i); }
@@ -106,7 +105,6 @@ namespace datalog {
     class rel_context_base : public engine_base {
     public:
         rel_context_base(ast_manager& m, char const* name): engine_base(m, name) {}
-        ~rel_context_base() override {}
         virtual relation_manager & get_rmanager() = 0;
         virtual const relation_manager & get_rmanager() const = 0;
         virtual relation_base & get_relation(func_decl * pred) = 0;
@@ -142,7 +140,6 @@ namespace datalog {
             context const& ctx;
         public:
             contains_pred(context& ctx): ctx(ctx) {}
-            ~contains_pred() override {}
 
             bool operator()(expr* e) override {
                 return ctx.is_predicate(e);
@@ -177,7 +174,7 @@ namespace datalog {
         contains_pred      m_contains_p;
         rule_properties    m_rule_properties;
         rule_transformer   m_transf;
-        trail_stack<context> m_trail;
+        trail_stack        m_trail;
         ast_ref_vector     m_pinned;
         bind_variables     m_bind_variables;
         sort_domain_map    m_sorts;
@@ -308,7 +305,7 @@ namespace datalog {
         void register_predicate(func_decl * pred, bool named);
 
         /**
-           Restrict reltaions to set of predicates.
+           Restrict relations to set of predicates.
          */
         void restrict_predicates(func_decl_set const& preds);
 
@@ -497,7 +494,7 @@ namespace datalog {
         // -----------------------------------
 
         bool canceled() {
-            return m.canceled() && (m_last_status = CANCELED, true);
+            return !m.inc() && (m_last_status = CANCELED, true);
         }
 
         void cleanup();
@@ -527,6 +524,8 @@ namespace datalog {
            for PDR mode and Duality mode.
          */
         model_ref get_model();
+
+        bool is_monotone();
 
         /**
            \brief retrieve proof from derivation of the query.
@@ -606,7 +605,6 @@ namespace datalog {
         */
         void reset_tables();
 
-
         void flush_add_rules();
 
         void ensure_engine(expr* e = nullptr);
@@ -624,4 +622,3 @@ namespace datalog {
 
 };
 
-#endif /* DL_CONTEXT_H_ */

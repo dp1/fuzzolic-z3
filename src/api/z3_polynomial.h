@@ -17,19 +17,18 @@ Notes:
 
 --*/
 
-#ifndef Z3_POLYNOMIAL_H_
-#define Z3_POLYNOMIAL_H_
+#pragma once
 
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
 
     /** \defgroup capi C API */
-    /*@{*/
+    /**@{*/
 
 
     /** @name Polynomials */
-    /*@{*/
+    /**@{*/
 
     /**
        \brief Return the nonzero subresultants of \c p and \c q with respect to the "variable" \c x.
@@ -44,11 +43,10 @@ extern "C" {
     Z3_ast_vector Z3_API Z3_polynomial_subresultants(Z3_context c, Z3_ast p, Z3_ast q, Z3_ast x);
 
 
-    /*@}*/
-    /*@}*/
+    /**@}*/
+    /**@}*/
 
 #ifdef __cplusplus
 }
 #endif // __cplusplus
 
-#endif

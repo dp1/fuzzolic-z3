@@ -17,10 +17,9 @@ Author:
 Revision History:
 
 --*/
-#ifndef EXT_NUMERAL_H_
-#define EXT_NUMERAL_H_
+#pragma once
 
-#include<iostream>
+#include<ostream>
 #include "util/debug.h"
     
 enum ext_numeral_kind { EN_MINUS_INFINITY, EN_NUMERAL, EN_PLUS_INFINITY };
@@ -344,4 +343,3 @@ void display_pp(std::ostream & out,
     }
 }
 
-#endif

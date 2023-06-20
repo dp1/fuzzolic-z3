@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef DL_BASE_H_
-#define DL_BASE_H_
+#pragma once
 
 #define DL_LEAK_HUNTING 0
 
@@ -74,7 +73,7 @@ namespace datalog {
 
 
     /**
-       Termplate class containing common infrastructure for relations and tables
+       Template class containing common infrastructure for relations and tables
     */
     template<class Traits>
     struct tr_infrastructure {
@@ -96,12 +95,12 @@ namespace datalog {
         public:
             bool operator==(const signature & o) const {
                 unsigned n=signature_base_base::size();
-                if(n!=o.size()) {
+                if (n!=o.size()) {
                     return false;
                 }
-                return memcmp(this->c_ptr(), o.c_ptr(), n*sizeof(sort))==0;
-                /*for(unsigned i=0; i<n; i++) {
-                    if((*this)[i]!=o[i]) {
+                return memcmp(this->data(), o.data(), n*sizeof(sort))==0;
+                /*for (unsigned i=0; i<n; i++) {
+                    if ((*this)[i]!=o[i]) {
                         return false;
                     }
                 }
@@ -117,15 +116,15 @@ namespace datalog {
                 result.reset();
 
                 unsigned s1sz=s1.size();
-                for(unsigned i=0; i<s1sz; i++) {
+                for (unsigned i=0; i<s1sz; i++) {
                     result.push_back(s1[i]);
                 }
                 unsigned s2sz=s2.size();
-                for(unsigned i=0; i<s2sz; i++) {
+                for (unsigned i=0; i<s2sz; i++) {
                     result.push_back(s2[i]);
                 }
 #if Z3DEBUG
-                for(unsigned i=0; i<col_cnt; i++) {
+                for (unsigned i=0; i<col_cnt; i++) {
                     SASSERT(cols1[i]<s1sz);
                     SASSERT(cols2[i]<s2sz);
                 }
@@ -161,7 +160,7 @@ namespace datalog {
                 SASSERT(cycle_len>=2);
                 result=src;
 
-                permutate_by_cycle(result, cycle_len, permutation_cycle);
+                permute_by_cycle(result, cycle_len, permutation_cycle);
             }
 
             /**
@@ -171,7 +170,7 @@ namespace datalog {
                     const unsigned * permutation, signature & result) {
                 result.reset();
                 unsigned n = src.size();
-                for(unsigned i=0; i<n; i++) {
+                for (unsigned i=0; i<n; i++) {
                     result.push_back(src[permutation[i]]);
                 }
             }
@@ -179,12 +178,11 @@ namespace datalog {
 
         class base_fn {
         public:
-            base_fn() {}
-            virtual ~base_fn() {}
-        private:
-            //private and undefined copy constructor and operator= to avoid copying
-            base_fn(const base_fn &);
-            base_fn& operator=(const base_fn &);
+            base_fn() = default;
+            virtual ~base_fn() = default;
+
+            base_fn(const base_fn &) = delete;
+            base_fn& operator=(const base_fn &) = delete;
         };
 
         class join_fn : public base_fn {
@@ -220,8 +218,6 @@ namespace datalog {
         */
         class mutator_fn : public base_fn {
         public:
-            ~mutator_fn() override {}
-
             virtual void operator()(base_object & t) = 0;
 
             virtual bool supports_attachment(base_object& other) { return false; }
@@ -264,7 +260,7 @@ namespace datalog {
             */
             bool check_kind(base_object const& r) const { return &r.get_plugin()==this; }
         public:
-            virtual ~plugin_object() {}
+            virtual ~plugin_object() = default;
 
             virtual void initialize(family_id fid) { m_kind = fid; }
 
@@ -427,7 +423,7 @@ namespace datalog {
             }
 #endif
 
-            virtual ~base_ancestor() {}
+            virtual ~base_ancestor() = default;
 
             void set_kind(family_id kind) { SASSERT(kind>=0); m_kind = kind; }
 
@@ -582,7 +578,7 @@ namespace datalog {
             const unsigned_vector m_cols2;
             bool m_all_neg_bound; //all columns are bound at least once
             bool m_overlap; //one column in negated table is bound multiple times
-            svector<bool> m_bound;
+            bool_vector m_bound;
 
             convenient_negation_filter_fn(const base_object & tgt, const base_object & neg_t,
                     unsigned joined_col_cnt, const unsigned * t_cols, const unsigned * negated_cols)
@@ -591,8 +587,8 @@ namespace datalog {
                 unsigned neg_sig_size = neg_t.get_signature().size();
                 m_overlap = false;
                 m_bound.resize(neg_sig_size, false);
-                for(unsigned i=0; i<joined_col_cnt; i++) {
-                    if(m_bound[negated_cols[i]]) {
+                for (unsigned i=0; i<joined_col_cnt; i++) {
+                    if (m_bound[negated_cols[i]]) {
                         m_overlap = true;
                     }
                     m_bound[negated_cols[i]]=true;
@@ -611,14 +607,14 @@ namespace datalog {
             void make_neg_bindings(T & tgt_neg, const U & src) const {
                 SASSERT(m_all_neg_bound);
                 SASSERT(!m_overlap);
-                for(unsigned i=0; i<m_joined_col_cnt; i++) {
+                for (unsigned i=0; i<m_joined_col_cnt; i++) {
                     tgt_neg[m_cols2[i]]=src[m_cols1[i]];
                 }
             }
             template<typename T, typename U>
             bool bindings_match(const T & tgt_neg, const U & src) const {
-                for(unsigned i=0; i<m_joined_col_cnt; i++) {
-                    if(tgt_neg[m_cols2[i]]!=src[m_cols1[i]]) {
+                for (unsigned i=0; i<m_joined_col_cnt; i++) {
+                    if (tgt_neg[m_cols2[i]]!=src[m_cols1[i]]) {
                         return false;
                     }
                 }
@@ -661,10 +657,10 @@ namespace datalog {
             base_object * operator()(const base_object & o) override {
                 const base_object * res = &o;
                 scoped_rel<base_object> res_scoped;
-                if(m_renamers_initialized) {
+                if (m_renamers_initialized) {
                     typename renamer_vector::iterator rit = m_renamers.begin();
                     typename renamer_vector::iterator rend = m_renamers.end();
-                    for(; rit!=rend; ++rit) {
+                    for (; rit!=rend; ++rit) {
                         res_scoped = (**rit)(*res);
                         res = res_scoped.get();
                     }
@@ -683,7 +679,7 @@ namespace datalog {
                     }
                     m_renamers_initialized = true;
                 }
-                if(res_scoped) {
+                if (res_scoped) {
                     SASSERT(res==res_scoped.get());
                     //we don't want to delete the last one since we'll be returning it
                     return res_scoped.release();
@@ -802,7 +798,6 @@ namespace datalog {
     protected:
         relation_base(relation_plugin & plugin, const relation_signature & s)
             : base_ancestor(plugin, s) {}
-        ~relation_base() override {}
     public:
         virtual relation_base * complement(func_decl* p) const = 0;
 
@@ -870,7 +865,7 @@ namespace datalog {
 
     class table_row_mutator_fn {
     public:
-        virtual ~table_row_mutator_fn() {}
+        virtual ~table_row_mutator_fn() = default;
         /**
             \brief The function is called for a particular table row. The \c func_columns contains
             a pointer to an array of functional column values that can be modified. If the function
@@ -884,9 +879,9 @@ namespace datalog {
 
     class table_row_pair_reduce_fn {
     public:
-        virtual ~table_row_pair_reduce_fn() {}
+        virtual ~table_row_pair_reduce_fn() = default;
         /**
-            \brief The function is called for pair of table rows that became duplicit due to projection.
+            \brief The function is called for pair of table rows that became duplicated due to projection.
             The values that are in the first array after return from the function will be used for the
             resulting row.
 
@@ -989,7 +984,7 @@ namespace datalog {
 #if Z3DEBUG
             unsigned first_src_fun = src.size()-src.functional_columns();
             bool in_func = permutation_cycle[0]>=first_src_fun;
-            for(unsigned i=1;i<cycle_len;i++) {
+            for (unsigned i=1;i<cycle_len;i++) {
                 SASSERT(in_func == (permutation_cycle[i]>=first_src_fun));
             }
 #endif
@@ -1007,7 +1002,7 @@ namespace datalog {
 #if Z3DEBUG
             unsigned sz = src.size();
             unsigned first_src_fun = sz-src.functional_columns();
-            for(unsigned i=first_src_fun;i<sz;i++) {
+            for (unsigned i=first_src_fun;i<sz;i++) {
                 SASSERT(permutation[i]>=first_src_fun);
             }
 #endif
@@ -1043,7 +1038,6 @@ namespace datalog {
     protected:
         table_base(table_plugin & plugin, const table_signature & s)
             : base_ancestor(plugin, s) {}
-        ~table_base() override {}
     public:
         table_base * clone() const override;
         virtual table_base * complement(func_decl* p, const table_element * func_columns = nullptr) const;
@@ -1076,7 +1070,7 @@ namespace datalog {
 
         virtual void remove_fact(const table_fact & fact) {
             SASSERT(fact.size() == get_signature().size());
-            remove_fact(fact.c_ptr()); }
+            remove_fact(fact.data()); }
 
         virtual void remove_fact(table_element const* fact) = 0;
         virtual void remove_facts(unsigned fact_cnt, const table_fact * facts);
@@ -1101,13 +1095,16 @@ namespace datalog {
             unsigned m_ref_cnt;
         public:
             iterator_core() : m_ref_cnt(0) {}
-            virtual ~iterator_core() {}
+            virtual ~iterator_core() = default;
+
+            iterator_core(const iterator_core &) = delete;
+            iterator_core & operator=(const iterator_core &) = delete;
 
             void inc_ref() { m_ref_cnt++; }
             void dec_ref() {
                 SASSERT(m_ref_cnt>0);
                 m_ref_cnt--;
-                if(m_ref_cnt==0) {
+                if (m_ref_cnt==0) {
                     dealloc(this);
                 }
             }
@@ -1121,23 +1118,22 @@ namespace datalog {
                 //the equality with the end() iterator
                 return is_finished() && it.is_finished();
             }
-        private:
-            //private and undefined copy constructor and assignment operator
-            iterator_core(const iterator_core &);
-            iterator_core & operator=(const iterator_core &);
         };
 
         struct row_iterator_core {
             unsigned m_ref_cnt;
         public:
             row_iterator_core() : m_ref_cnt(0) {}
-            virtual ~row_iterator_core() {}
+            virtual ~row_iterator_core() = default;
+
+            row_iterator_core(const row_iterator_core &) = delete;
+            row_iterator_core & operator=(const row_iterator_core &) = delete;
 
             void inc_ref() { m_ref_cnt++; }
             void dec_ref() {
                 SASSERT(m_ref_cnt>0);
                 m_ref_cnt--;
-                if(m_ref_cnt==0) {
+                if (m_ref_cnt==0) {
                     dealloc(this);
                 }
             }
@@ -1151,10 +1147,6 @@ namespace datalog {
                 //the equality with the end() iterator
                 return is_finished() && it.is_finished();
             }
-        private:
-            //private and undefined copy constructor and assignment operator
-            row_iterator_core(const row_iterator_core &);
-            row_iterator_core & operator=(const row_iterator_core &);
         };
 
     public:
@@ -1213,7 +1205,7 @@ namespace datalog {
             typedef row_iterator const_iterator;
 
             row_interface(const table_base & parent_table) : m_parent_table(parent_table) {}
-            virtual ~row_interface() {}
+            virtual ~row_interface() = default;
 
             virtual table_element operator[](unsigned col) const = 0;
 
@@ -1231,7 +1223,7 @@ namespace datalog {
 
             bool populated() const { return !m_current.empty(); }
             void ensure_populated() const {
-                if(!populated()) {
+                if (!populated()) {
                     get_fact(m_current);
                 }
             }
@@ -1272,4 +1264,3 @@ namespace datalog {
 
 };
 
-#endif /* DL_BASE_H_ */

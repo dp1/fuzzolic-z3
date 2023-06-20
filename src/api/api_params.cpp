@@ -17,7 +17,6 @@ Author:
 Revision History:
 
 --*/
-#include<iostream>
 #include "api/z3.h"
 #include "api/api_log_macros.h"
 #include "api/api_context.h"
@@ -54,8 +53,8 @@ extern "C" {
     void Z3_API Z3_params_dec_ref(Z3_context c, Z3_params p) {
         Z3_TRY;
         LOG_Z3_params_dec_ref(c, p);
-        RESET_ERROR_CODE();
-        to_params(p)->dec_ref();
+        if (p)
+            to_params(p)->dec_ref();
         Z3_CATCH;
     }
 
@@ -66,7 +65,8 @@ extern "C" {
         Z3_TRY;
         LOG_Z3_params_set_bool(c, p, k, v);
         RESET_ERROR_CODE();
-        to_params(p)->m_params.set_bool(norm_param_name(to_symbol(k)).c_str(), v);
+        auto name = norm_param_name(to_symbol(k));
+        to_params(p)->m_params.set_bool(name.c_str(), v);
         Z3_CATCH;
     }
 
@@ -77,7 +77,8 @@ extern "C" {
         Z3_TRY;
         LOG_Z3_params_set_uint(c, p, k, v);
         RESET_ERROR_CODE();
-        to_params(p)->m_params.set_uint(norm_param_name(to_symbol(k)).c_str(), v);
+        auto name = norm_param_name(to_symbol(k));
+        to_params(p)->m_params.set_uint(name.c_str(), v);
         Z3_CATCH;
     }
 
@@ -88,7 +89,8 @@ extern "C" {
         Z3_TRY;
         LOG_Z3_params_set_double(c, p, k, v);
         RESET_ERROR_CODE();
-        to_params(p)->m_params.set_double(norm_param_name(to_symbol(k)).c_str(), v);
+        auto name = norm_param_name(to_symbol(k));
+        to_params(p)->m_params.set_double(name.c_str(), v);
         Z3_CATCH;
     }
 
@@ -99,7 +101,8 @@ extern "C" {
         Z3_TRY;
         LOG_Z3_params_set_symbol(c, p, k, v);
         RESET_ERROR_CODE();
-        to_params(p)->m_params.set_sym(norm_param_name(to_symbol(k)).c_str(), to_symbol(v));
+        auto name = norm_param_name(to_symbol(k));
+        to_params(p)->m_params.set_sym(name.c_str(), to_symbol(v));
         Z3_CATCH;
     }
     
@@ -113,7 +116,7 @@ extern "C" {
         RESET_ERROR_CODE();
         std::ostringstream buffer;
         to_params(p)->m_params.display(buffer);
-        return mk_c(c)->mk_external_string(buffer.str());
+        return mk_c(c)->mk_external_string(std::move(buffer).str());
         Z3_CATCH_RETURN("");
     }
 
@@ -136,8 +139,8 @@ extern "C" {
     void Z3_API Z3_param_descrs_dec_ref(Z3_context c, Z3_param_descrs p) {
         Z3_TRY;
         LOG_Z3_param_descrs_dec_ref(c, p);
-        RESET_ERROR_CODE();
-        to_param_descrs(p)->dec_ref();
+        if (p) 
+            to_param_descrs(p)->dec_ref();
         Z3_CATCH;
     }
 
@@ -172,11 +175,11 @@ extern "C" {
         RESET_ERROR_CODE();
         if (i >= to_param_descrs_ptr(p)->size()) {
             SET_ERROR_CODE(Z3_IOB, nullptr);
-            RETURN_Z3(nullptr);
+            return of_symbol(symbol::null);
         }
         Z3_symbol result = of_symbol(to_param_descrs_ptr(p)->get_param_name(i));
         return result;
-        Z3_CATCH_RETURN(nullptr);
+        Z3_CATCH_RETURN(of_symbol(symbol::null));
     }
 
     Z3_string Z3_API Z3_param_descrs_get_documentation(Z3_context c, Z3_param_descrs p, Z3_symbol s) {
@@ -205,7 +208,7 @@ extern "C" {
             buffer << to_param_descrs_ptr(p)->get_param_name(i);
         }
         buffer << ")";
-        return mk_c(c)->mk_external_string(buffer.str());
+        return mk_c(c)->mk_external_string(std::move(buffer).str());
         Z3_CATCH_RETURN("");
     }
 

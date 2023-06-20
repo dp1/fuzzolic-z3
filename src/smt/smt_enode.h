@@ -16,16 +16,20 @@ Author:
 Revision History:
 
 --*/
-#ifndef SMT_ENODE_H_
-#define SMT_ENODE_H_
+#pragma once
 
+#include "util/id_var_list.h"
+#include "util/approx_set.h"
 #include "ast/ast.h"
+#include "ast/ast_pp.h"
 #include "smt/smt_types.h"
 #include "smt/smt_eq_justification.h"
-#include "smt/smt_theory_var_list.h"
-#include "util/approx_set.h"
+
 
 namespace smt {
+
+    class context;
+
     /**
        \brief Justification for the transitivity rule.
     */
@@ -45,21 +49,8 @@ namespace smt {
     referencing few nodes from a large ast manager. There is some
     unknown performance penalty for this. */
 
-    // #define SPARSE_MAP
-
-#ifndef SPARSE_MAP
     typedef ptr_vector<enode> app2enode_t;    // app -> enode
-#else
-    class app2enode_t : public u_map<enode *> {
-    public:
-        void setx(unsigned x, enode *val, enode *def){
-            if (val == 0)
-                erase(x);
-            else
-                insert(x,val);
-      }
-    };
-#endif
+    typedef id_var_list<null_family_id, null_theory_var> theory_var_list;
 
     class tmp_enode;
 
@@ -87,6 +78,8 @@ namespace smt {
         unsigned            m_merge_tf:1;       //!< True if the enode should be merged with true/false when the associated boolean variable is assigned.
         unsigned            m_cgc_enabled:1;    //!< True if congruence closure is enabled for this enode.
         unsigned            m_iscope_lvl;       //!< When the enode was internalized
+        bool                m_proof_is_logged;  //!< Indicates that the proof for the enode being equal to its root is in the log.
+        signed char         m_lbl_hash;         //!< It is different from -1, if enode is used in a pattern
         /*
           The following property is valid for m_parents
           
@@ -103,22 +96,19 @@ namespace smt {
           then the congruent f(b) in m_parents will also be relevant. 
         */
         enode_vector        m_parents;          //!< Parent enodes of the equivalence class.
-        theory_var_list     m_th_var_list;      //!< List of theories that 'care' about this enode.
+        id_var_list<>       m_th_var_list;      //!< List of theories that 'care' about this enode.
         trans_justification m_trans;            //!< A justification for the enode being equal to its root.
-        bool                m_proof_is_logged;  //!< Indicates that the proof for the enode being equal to its root is in the log.
-        signed char         m_lbl_hash;         //!< It is different from -1, if enode is used in a pattern
         approx_set          m_lbls;
         approx_set          m_plbls;
         enode *             m_args[0];          //!< Cached args
         
         friend class context;
-        friend class euf_manager;
         friend class conflict_resolution;
         friend class quantifier_manager;
         
 
         theory_var_list * get_th_var_list() { 
-            return m_th_var_list.get_th_var() == null_theory_var ? nullptr : &m_th_var_list;
+            return m_th_var_list.get_var() == null_theory_var ? nullptr : &m_th_var_list;
         }
 
         friend class set_merge_tf_trail;
@@ -168,7 +158,6 @@ namespace smt {
 
         void mark_as_interpreted() {
             SASSERT(!m_interpreted);
-            SASSERT(m_owner->get_num_args() == 0);
             SASSERT(m_class_size == 1);
             m_interpreted = true;
         }
@@ -176,21 +165,15 @@ namespace smt {
 
         void del_eh(ast_manager & m, bool update_children_parent = true);
         
-        app * get_owner() const { 
-            return m_owner; 
-        }
+        app * get_expr() const { return m_owner; }
 
-        unsigned get_owner_id() const {
-            return m_owner->get_id();
-        }
+        unsigned get_owner_id() const { return m_owner->get_id(); }
+        unsigned get_expr_id() const { return m_owner->get_id(); }
 
-        func_decl * get_decl() const {
-            return m_owner->get_decl();
-        }
+        func_decl * get_decl() const { return m_owner->get_decl(); }
+        unsigned get_decl_id() const { return m_owner->get_decl()->get_small_id(); }
 
-        unsigned get_decl_id() const {
-            return m_owner->get_decl()->get_decl_id();
-        }
+        sort* get_sort() const { return m_owner->get_sort(); }
 
         unsigned hash() const {
             return m_owner->hash();
@@ -199,6 +182,10 @@ namespace smt {
 
         enode * get_root() const { 
             return m_root; 
+        }
+
+        bool is_root() const {
+            return m_root == this;
         }
 
         void set_root(enode* r) {
@@ -241,12 +228,6 @@ namespace smt {
         };
 
         const_args get_const_args() const { return const_args(this); }
-
-        // args get_args() { return args(this); }
-
-        // unsigned get_id() const { 
-        //    return m_id; 
-        // }
 
         unsigned get_class_size() const { 
             return m_class_size; 
@@ -354,13 +335,28 @@ namespace smt {
         enode_vector::const_iterator end_parents() const { 
             return m_parents.end(); 
         }
+
+        class iterator {
+            enode* m_first;
+            enode* m_last;
+        public:
+            iterator(enode* n, enode* m): m_first(n), m_last(m) {} 
+            enode* operator*() { return m_first; }
+            iterator& operator++() { if (!m_last) m_last = m_first; m_first = m_first->m_next; return *this; }
+            iterator operator++(int) { iterator tmp = *this; ++*this; return tmp; }
+            bool operator==(iterator const& other) const { return m_last == other.m_last && m_first == other.m_first; }
+            bool operator!=(iterator const& other) const { return !(*this == other); }            
+        };
+
+        iterator begin() { return iterator(this, nullptr); }
+        iterator end() { return iterator(this, this); }
         
         theory_var_list const * get_th_var_list() const { 
-            return m_th_var_list.get_th_var() == null_theory_var ? nullptr : &m_th_var_list;
+            return m_th_var_list.get_var() == null_theory_var ? nullptr : &m_th_var_list;
         }
 
         bool has_th_vars() const {
-            return m_th_var_list.get_th_var() != null_theory_var;
+            return m_th_var_list.get_var() != null_theory_var;
         }
 
         unsigned get_num_th_vars() const;
@@ -456,7 +452,7 @@ namespace smt {
         void reset();
     };
 
+    inline mk_pp pp(enode* n, ast_manager& m) { return mk_pp(n->get_expr(), m); }
 };
 
-#endif /* SMT_ENODE_H_ */
 

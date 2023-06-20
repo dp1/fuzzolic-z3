@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef UINT_SET_H_
-#define UINT_SET_H_
+#pragma once
 
 #include "util/util.h"
 #include "util/vector.h"
@@ -28,16 +27,6 @@ class uint_set : unsigned_vector {
 public:
     
     typedef unsigned data;
-
-    uint_set() {}
-
-    uint_set(const uint_set & source) {
-        for (unsigned i = 0; i < source.size(); ++i) {
-            push_back(source[i]);
-        }
-    }
-
-    ~uint_set() {}
 
     void swap(uint_set & other) {
         unsigned_vector::swap(other);
@@ -91,7 +80,7 @@ public:
 
     // Insert in the this object the elements in the set source.
     uint_set & operator |=(const uint_set & source) {
-        unsigned source_size = source.size();
+        auto source_size = source.size();
         if (source_size > size()) {
             resize(source_size + 1);
         }
@@ -102,7 +91,7 @@ public:
     }
 
     uint_set& operator &=(const uint_set& source) {
-        unsigned source_size = source.size();
+        auto source_size = source.size();
         if (source_size < size()) {
             resize(source_size);
         }
@@ -113,7 +102,7 @@ public:
     }
 
     bool operator==(const uint_set & source) const {
-        unsigned min_size = size();
+        auto min_size = size();
         if (source.size() < min_size) {
             min_size = source.size();
         }
@@ -122,12 +111,12 @@ public:
                 return false;
             }
         }
-        for (unsigned i = min_size; i < size(); ++i) {
+        for (auto i = min_size; i < size(); ++i) {
             if ((*this)[i]) {
                 return false;
             }
         }
-        for (unsigned i = min_size; i < source.size(); ++i) {
+        for (auto i = min_size; i < source.size(); ++i) {
             if (source[i]) {
                 return false;
             }
@@ -142,7 +131,7 @@ public:
 
     // Return true if the this set is a subset of source.
     bool subset_of(const uint_set & source) const {
-        unsigned min_size = size();
+        auto min_size = size();
         if (source.size() < min_size) {
             min_size = source.size();
         }
@@ -151,7 +140,7 @@ public:
                 return false;
             }
         }
-        for (unsigned i = min_size; i < size(); ++i) {
+        for (auto i = min_size; i < size(); ++i) {
             if ((*this)[i]) {
                 return false;
             }
@@ -203,18 +192,12 @@ public:
             m_set(&s), m_index(at_end?s.get_max_elem():0), m_last(s.get_max_elem()) {
             scan();
             SASSERT(invariant());
-          }
+        }
         unsigned operator*() const { return m_index; }
         bool operator==(iterator const& it) const { return m_index == it.m_index; }
         bool operator!=(iterator const& it) const { return m_index != it.m_index; }
         iterator & operator++() { ++m_index; scan(); return *this; }
         iterator operator++(int) { iterator tmp = *this; ++*this; return tmp; }
-        iterator & operator=(iterator const& other) { 
-            m_set = other.m_set;
-            m_index = other.m_index;
-            m_last = other.m_last;
-            return *this;
-        }
     };
 
     iterator const begin() const { return iterator(*this, false); }
@@ -269,19 +252,13 @@ public:
     void remove(unsigned v) {
         if (contains(v)) {
             m_in_set[v] = false;
-            unsigned i = m_set.size();
+            auto i = m_set.size();
             for (; i > 0 && m_set[--i] != v; ) 
                 ;
             SASSERT(m_set[i] == v);
             m_set[i] = m_set.back();
             m_set.pop_back();
         }
-    }
-    
-    tracked_uint_set& operator=(tracked_uint_set const& other) {
-        m_in_set = other.m_in_set;
-        m_set = other.m_set;
-        return *this;
     }
     
     bool contains(unsigned v) const {
@@ -305,7 +282,7 @@ public:
     iterator end() const { return m_set.end(); }
     // void reset() { m_set.reset(); m_in_set.reset(); }
     void reset() { 
-        unsigned sz = m_set.size();
+        auto sz = m_set.size();
         for (unsigned i = 0; i < sz; ++i) m_in_set[m_set[i]] = false;
         m_set.reset(); 
     }
@@ -384,6 +361,3 @@ inline std::ostream& operator<<(std::ostream& out, indexed_uint_set const& s) {
     for (unsigned i : s) out << i << " ";
     return out;
 }
-
-#endif /* UINT_SET_H_ */
-

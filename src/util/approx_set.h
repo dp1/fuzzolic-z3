@@ -16,9 +16,8 @@ Author:
 Revision History:
 
 --*/
-#ifndef APPROX_SET_H_
-#define APPROX_SET_H_
-#include<iostream>
+#pragma once
+#include<ostream>
 #include "util/debug.h"
 
 template<typename T> class approx_set_traits;
@@ -70,6 +69,10 @@ public:
     approx_set_tpl(approx_set_tpl const & s):
         m_set(s.m_set) {
     }
+
+    void set(R s) { m_set = s; }
+
+    R get() const { return m_set; }
 
     void insert(T const & e) {
         m_set |= e2s(e);
@@ -161,9 +164,9 @@ typedef approx_set_tpl<unsigned, u2u> u_approx_set;
 
 class approx_set : public u_approx_set {
 public:
-    approx_set():u_approx_set() {}
+    approx_set() = default;
     approx_set(unsigned e):u_approx_set(e) {}
-
+    
     class iterator {
         unsigned long long m_set;
         unsigned           m_val;
@@ -232,5 +235,4 @@ inline std::ostream & operator<<(std::ostream & out, approx_set const & s) {
     return out;
 }
 
-#endif /* APPROX_SET_H_ */
 

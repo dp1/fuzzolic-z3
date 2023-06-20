@@ -17,8 +17,7 @@ Notes:
 
    
 --*/
-#ifndef OPT_SLS_SOLVER_H_
-#define OPT_SLS_SOLVER_H_
+#pragma once
 
 #include "solver/solver_na2as.h"
 #include "tactic/arith/card2bv_tactic.h"
@@ -56,7 +55,7 @@ namespace opt {
         {            
             updt_params(p);
         }
-        virtual ~sls_solver() {}
+        virtual ~sls_solver() = default;
 
         virtual void updt_params(params_ref & p) {
             m_solver->updt_params(p);
@@ -232,4 +231,3 @@ namespace opt {
     };
 }
 
-#endif

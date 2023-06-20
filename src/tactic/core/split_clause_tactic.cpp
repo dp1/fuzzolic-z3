@@ -18,6 +18,7 @@ Notes:
 
 --*/
 #include "tactic/tactical.h"
+#include "tactic/goal_proof_converter.h"
 #include "tactic/core/split_clause_tactic.h"
 
 class split_clause_tactic : public tactic {
@@ -52,8 +53,6 @@ class split_clause_tactic : public tactic {
         split_pc(ast_manager & m, app * cls, proof * pr):m_clause(cls, m), m_clause_pr(pr, m) {
         }
 
-        ~split_pc() override { }
-
         proof_ref operator()(ast_manager & m, unsigned num_source, proof * const * source) override {
             // Let m_clause be of the form (l_0 or ... or l_{num_source - 1})
             // Each source[i] proof is a proof for "false" using l_i as a hypothesis
@@ -67,7 +66,7 @@ class split_clause_tactic : public tactic {
                 expr * not_li = m.mk_not(m_clause->get_arg(i));
                 prs.push_back(m.mk_lemma(pr_i, not_li));
             }
-            return proof_ref(m.mk_unit_resolution(prs.size(), prs.c_ptr()), m);
+            return proof_ref(m.mk_unit_resolution(prs.size(), prs.data()), m);
         }
 
         proof_converter * translate(ast_translation & translator) override {
@@ -87,9 +86,8 @@ public:
         t->m_largest_clause = m_largest_clause;
         return t;
     }
-    
-    ~split_clause_tactic() override {
-    }
+
+    char const* name() const override { return "split_clause"; }
 
     void updt_params(params_ref const & p) override {
         m_largest_clause = p.get_bool("split_largest_clause", false);
@@ -101,7 +99,6 @@ public:
     
     void operator()(goal_ref const & in, 
                     goal_ref_buffer & result) override {
-        SASSERT(in->is_well_sorted());
         tactic_report report("split-clause", *in);
         TRACE("before_split_clause", in->display(tout););
         ast_manager & m = in->m();
@@ -125,8 +122,8 @@ public:
             subgoal_i->inc_depth();
             result.push_back(subgoal_i);
         }
-        in->set(concat(in->pc(), result.size(), result.c_ptr()));
-        in->add(dependency_converter::concat(result.size(), result.c_ptr()));
+        in->set(concat(in->pc(), result.size(), result.data()));
+        in->add(dependency_converter::concat(result.size(), result.data()));
     }
     
     void cleanup() override {

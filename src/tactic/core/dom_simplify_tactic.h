@@ -14,12 +14,33 @@ Author:
 
     Nikolaj and Nuno 
 
-Notes:
+Tactic Documentation:
+
+## Tactic dom-simplify
+
+### Short Description
+
+Apply dominator simplification rules
+
+### Long Description
+
+Dominator-based simplification is a context dependent simplification function that uses a dominator tree to control the number of paths it 
+visits during simplification. The expression DAG may have an exponential number of paths, but only paths corresponding to a dominator
+tree are visited. Since the paths selected by the dominator trees are limited, the simplifier may easily fail to simplify within a context. 
+
+### Example
+
+```z3
+(declare-const a Bool)
+(declare-const b Bool)
+(assert (and a (or a b)))
+(apply dom-simplify)
+```
+
 
 --*/
 
-#ifndef DOM_SIMPLIFY_TACTIC_H_
-#define DOM_SIMPLIFY_TACTIC_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "ast/expr_substitution.h"
@@ -41,7 +62,7 @@ private:
     tree_t                m_tree;
 
     void add_edge(tree_t& tree, expr * src, expr* dst) {        
-        tree.insert_if_not_there2(src, ptr_vector<expr>())->get_data().m_value.push_back(dst);        
+        tree.insert_if_not_there(src, ptr_vector<expr>()).push_back(dst);        
     }
 
     void compute_post_order();
@@ -65,9 +86,7 @@ public:
 
 class dom_simplifier {
  public:
-    dom_simplifier() {}
-    
-    virtual ~dom_simplifier() {}
+    virtual ~dom_simplifier() = default;
     /**
        \brief assert_expr performs an implicit push
     */
@@ -105,15 +124,17 @@ class dom_simplify_tactic : public tactic {
     expr_ref simplify_rec(expr* t);
     expr_ref simplify_arg(expr* t);
     expr_ref simplify_ite(app * ite);
-    expr_ref simplify_and(app * ite) { return simplify_and_or(true, ite); }
-    expr_ref simplify_or(app * ite) { return simplify_and_or(false, ite); }
-    expr_ref simplify_and_or(bool is_and, app * ite);
+    expr_ref simplify_and(app * e) { return simplify_and_or(true, e); }
+    expr_ref simplify_or(app * e) { return simplify_and_or(false, e); }
+    expr_ref simplify_and_or(bool is_and, app * e);
+    expr_ref simplify_not(app * e);
     void simplify_goal(goal& g);
 
     bool is_subexpr(expr * a, expr * b);
 
     expr_ref get_cached(expr* t) { expr* r = nullptr; if (!m_result.find(t, r)) r = t; return expr_ref(r, m); }
     void cache(expr *t, expr* r) { m_result.insert(t, r); m_trail.push_back(r); }
+    void reset_cache() { m_result.reset(); }
 
     ptr_vector<expr> const & tree(expr * e);
     expr* idom(expr *e) const { return m_dominators.idom(e); }
@@ -132,6 +153,8 @@ public:
 
     ~dom_simplify_tactic() override;
 
+    char const* name() const override { return "dom_simplify"; }
+
     tactic * translate(ast_manager & m) override;
     void updt_params(params_ref const & p) override {}
     static  void get_param_descrs(param_descrs & r) {}
@@ -140,42 +163,9 @@ public:
     void cleanup() override;
 };
 
-class expr_substitution_simplifier : public dom_simplifier {
-    ast_manager&             m;
-    expr_substitution        m_subst;
-    scoped_expr_substitution m_scoped_substitution;
-    obj_map<expr, unsigned>  m_expr2depth;
-    expr_ref_vector          m_trail;
-
-    // move from asserted_formulas to here..
-    void compute_depth(expr* e);
-    bool is_gt(expr* lhs, expr* rhs);
-    unsigned depth(expr* e) { return m_expr2depth[e]; }
-
-public:
-    expr_substitution_simplifier(ast_manager& m): m(m), m_subst(m), m_scoped_substitution(m_subst), m_trail(m) {}
-    ~expr_substitution_simplifier() override {}
-    bool assert_expr(expr * t, bool sign) override;
-
-    void update_substitution(expr* n, proof* pr);
-    
-    void operator()(expr_ref& r) override { r = m_scoped_substitution.find(r); }
-    
-    void pop(unsigned num_scopes) override { m_scoped_substitution.pop(num_scopes); }
-    
-    unsigned scope_level() const override { return m_scoped_substitution.scope_level(); }
-
-    dom_simplifier * translate(ast_manager & m) override {
-        SASSERT(m_subst.empty());
-        return alloc(expr_substitution_simplifier, m);
-    }
-};
-
-
 tactic * mk_dom_simplify_tactic(ast_manager & m, params_ref const & p = params_ref());
 
 /*
 ADD_TACTIC("dom-simplify", "apply dominator simplification rules.", "mk_dom_simplify_tactic(m, p)")
 */
 
-#endif

@@ -16,18 +16,17 @@ Author:
 Notes:
 
 --*/
-#ifndef Z3_FIXEDPOINT_H_
-#define Z3_FIXEDPOINT_H_
+#pragma once
 
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
 
     /** \defgroup capi C API */
-    /*@{*/
+    /**@{*/
 
     /** @name Fixedpoint facilities */
-    /*@{*/
+    /**@{*/
     /**
        \brief Create a new fixedpoint context.
 
@@ -110,7 +109,7 @@ extern "C" {
         - \c Z3_L_TRUE if the query is satisfiable. Obtain the answer by calling #Z3_fixedpoint_get_answer.
         - \c Z3_L_UNDEF if the query was interrupted, timed out or otherwise failed.
 
-        def_API('Z3_fixedpoint_query', INT, (_in(CONTEXT), _in(FIXEDPOINT), _in(AST)))
+        def_API('Z3_fixedpoint_query', LBOOL, (_in(CONTEXT), _in(FIXEDPOINT), _in(AST)))
     */
     Z3_lbool Z3_API Z3_fixedpoint_query(Z3_context c, Z3_fixedpoint d, Z3_ast query);
 
@@ -124,7 +123,7 @@ extern "C" {
         - \c Z3_L_TRUE if the query is satisfiable. Obtain the answer by calling #Z3_fixedpoint_get_answer.
         - \c Z3_L_UNDEF if the query was interrupted, timed out or otherwise failed.
 
-        def_API('Z3_fixedpoint_query_relations', INT, (_in(CONTEXT), _in(FIXEDPOINT), _in(UINT), _in_array(2, FUNC_DECL)))
+        def_API('Z3_fixedpoint_query_relations', LBOOL, (_in(CONTEXT), _in(FIXEDPOINT), _in(UINT), _in_array(2, FUNC_DECL)))
     */
     Z3_lbool Z3_API Z3_fixedpoint_query_relations(
         Z3_context c, Z3_fixedpoint d,
@@ -374,11 +373,10 @@ extern "C" {
 
     void Z3_API Z3_fixedpoint_add_constraint (Z3_context c, Z3_fixedpoint d, Z3_ast e, unsigned lvl);
 
-    /*@}*/
-    /*@}*/
+    /**@}*/
+    /**@}*/
 
 #ifdef __cplusplus
 }
 #endif // __cplusplus
 
-#endif

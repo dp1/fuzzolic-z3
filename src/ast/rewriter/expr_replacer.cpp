@@ -25,6 +25,11 @@ void expr_replacer::operator()(expr * t, expr_ref & result, proof_ref & result_p
     operator()(t, result, result_pr, result_dep);
 }
 
+void expr_replacer::operator()(expr* t, expr_ref& result, expr_dependency_ref& result_dep) {
+    proof_ref result_pr(m());
+    operator()(t, result, result_pr, result_dep);
+}
+
 void expr_replacer::operator()(expr * t, expr_ref & result) {
     proof_ref pr(m());
     operator()(t, result, pr);
@@ -83,9 +88,9 @@ class default_expr_replacer : public expr_replacer {
     default_expr_replacer_cfg               m_cfg;
     rewriter_tpl<default_expr_replacer_cfg> m_replacer;
 public:
-    default_expr_replacer(ast_manager & m):
+    default_expr_replacer(ast_manager & m, bool proofs_enabled):
         m_cfg(m),
-        m_replacer(m, m.proofs_enabled(), m_cfg) {
+        m_replacer(m, m.proofs_enabled() && proofs_enabled, m_cfg) {
     }
     
     ast_manager & m() const override { return m_replacer.m(); }
@@ -115,8 +120,8 @@ public:
     }
 };
 
-expr_replacer * mk_default_expr_replacer(ast_manager & m) {
-    return alloc(default_expr_replacer, m);
+expr_replacer * mk_default_expr_replacer(ast_manager & m, bool proofs_allowed) {
+    return alloc(default_expr_replacer, m, proofs_allowed);
 }
 
 /**
@@ -128,8 +133,6 @@ public:
     th_rewriter2expr_replacer(ast_manager & m, params_ref const & p):
         m_r(m, p) {
     }
-
-    ~th_rewriter2expr_replacer() override {}
 
     ast_manager & m() const override { return m_r.m(); }
 

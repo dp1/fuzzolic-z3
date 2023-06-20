@@ -70,20 +70,16 @@ namespace datalog {
             m_union_decl(mk_explanations::get_union_decl(get_context()), get_ast_manager()) {}
 
         ~explanation_relation_plugin() override {
-            for (unsigned i = 0; i < m_pool.size(); ++i) {
-                for (unsigned j = 0; j < m_pool[i].size(); ++j) {
+            for (unsigned i = 0; i < m_pool.size(); ++i) 
+                for (unsigned j = 0; j < m_pool[i].size(); ++j) 
                     dealloc(m_pool[i][j]);
-                }
-            }
         }
 
         bool can_handle_signature(const relation_signature & s) override {
             unsigned n=s.size();
-            for (unsigned i=0; i<n; i++) {
-                if (!get_context().get_decl_util().is_rule_sort(s[i])) {
+            for (unsigned i=0; i<n; i++) 
+                if (!get_context().get_decl_util().is_rule_sort(s[i])) 
                     return false;
-                }
-            }
             return true;
         }
         
@@ -105,9 +101,10 @@ namespace datalog {
         relation_intersection_filter_fn * mk_filter_by_negation_fn(const relation_base & t,
             const relation_base & negated_obj, unsigned joined_col_cnt,
             const unsigned * t_cols, const unsigned * negated_cols) override;
-        relation_intersection_filter_fn * mk_filter_by_intersection_fn(const relation_base & t,
-                const relation_base & src, unsigned joined_col_cnt,
-                const unsigned * t_cols, const unsigned * src_cols) override;
+        relation_intersection_filter_fn * mk_filter_by_intersection_fn(
+            const relation_base & t,
+            const relation_base & src, unsigned joined_col_cnt,
+            const unsigned * t_cols, const unsigned * src_cols) override;
 
     };
 
@@ -150,10 +147,10 @@ namespace datalog {
         void assign_data(const relation_fact & f) {
             m_empty = false;
 
-            unsigned n=get_signature().size();
+            unsigned n = get_signature().size();
             SASSERT(f.size()==n);
             m_data.reset();
-            m_data.append(n, f.c_ptr());
+            m_data.append(n, f.data());
         }
         void set_undefined() {
             m_empty = false;
@@ -161,11 +158,12 @@ namespace datalog {
             m_data.resize(get_signature().size());
         }
         void unite_with_data(const relation_fact & f) {
+
             if (empty()) {
                 assign_data(f);
                 return;
             }
-            unsigned n=get_signature().size();
+            unsigned n = get_signature().size();
             SASSERT(f.size()==n);
             for (unsigned i=0; i<n; i++) {
                 SASSERT(!is_undefined(i));
@@ -185,7 +183,7 @@ namespace datalog {
 
         void to_formula(expr_ref& fml) const override {
             ast_manager& m = fml.get_manager();
-            fml = m.mk_eq(m.mk_var(0, m.get_sort(m_data[0])), m_data[0]);
+            fml = m.mk_eq(m.mk_var(0, m_data[0]->get_sort()), m_data[0]);
         }
 
         bool is_undefined(unsigned col_idx) const {
@@ -365,9 +363,9 @@ namespace datalog {
 
             explanation_relation * res = static_cast<explanation_relation *>(plugin.mk_empty(get_result_signature()));
             if (!r.empty()) {
-                relation_fact permutated_data = r.m_data;
-                permutate_by_cycle(permutated_data, m_cycle);
-                res->assign_data(permutated_data);
+                relation_fact permuted_data = r.m_data;
+                permute_by_cycle(dynamic_cast<app_ref_vector&>(permuted_data), m_cycle);
+                res->assign_data(permuted_data);
             }
             return res;
         }
@@ -389,7 +387,7 @@ namespace datalog {
             explanation_relation_plugin & plugin = tgt.get_plugin();
 
             if (!src.no_undefined() || !tgt.no_undefined() || (delta && !delta->no_undefined())) {
-                UNREACHABLE();
+                throw default_exception("explanations are not supported with undefined predicates");
             }
             if (src.empty()) {
                 return;
@@ -456,11 +454,15 @@ namespace datalog {
               m_col_idx(col_idx), 
               m_new_rule(std::move(new_rule)) {}
 
+        void not_handled() {
+            throw default_exception("explanations are not supported with undefined predicates");
+        }
+
         void operator()(relation_base & r0) override {
             explanation_relation & r = static_cast<explanation_relation &>(r0);
 
             if (!r.is_undefined(m_col_idx)) {
-                UNREACHABLE();
+                not_handled();
             }
 
             unsigned sz = r.get_signature().size();
@@ -468,10 +470,11 @@ namespace datalog {
             subst_arg.resize(sz);
             unsigned ofs = sz-1;
             for (unsigned i=0; i<sz; i++) {
-                SASSERT(!r.is_undefined(i) || !contains_var(m_new_rule, i));
+                if (r.is_undefined(i) && contains_var(m_new_rule, i))
+                    not_handled();
                 subst_arg[ofs-i] = r.m_data.get(i);
             }
-            expr_ref res = m_subst(m_new_rule, subst_arg.size(), subst_arg.c_ptr());
+            expr_ref res = m_subst(m_new_rule, subst_arg.size(), subst_arg.data());
             r.m_data[m_col_idx] = to_app(res);
         }
     };
@@ -628,6 +631,9 @@ namespace datalog {
         );
     }
 
+    mk_explanations::~mk_explanations() {
+    }
+
     func_decl * mk_explanations::get_union_decl(context & ctx) {
         ast_manager & m = ctx.get_manager();
         sort_ref s(ctx.get_decl_util().mk_rule_sort(), m);
@@ -644,10 +650,10 @@ namespace datalog {
         relation_signature sig;
         rmgr.from_predicate(e_decl, sig);
 
-        svector<bool> inner_sieve(sz-1, true);
+        bool_vector inner_sieve(sz-1, true);
         inner_sieve.push_back(false);
 
-        svector<bool> expl_sieve(sz-1, false);
+        bool_vector expl_sieve(sz-1, false);
         expl_sieve.push_back(true);
 
         sieve_relation_plugin & sieve_plugin = sieve_relation_plugin::get_plugin(rmgr);
@@ -668,21 +674,21 @@ namespace datalog {
     }
 
     func_decl * mk_explanations::get_e_decl(func_decl * orig_decl) {
-        decl_map::obj_map_entry * e = m_e_decl_map.insert_if_not_there2(orig_decl, 0);
-        if (e->get_data().m_value==0) {
+        auto& value = m_e_decl_map.insert_if_not_there(orig_decl, 0);
+        if (value == nullptr) {
             relation_signature e_domain;
             e_domain.append(orig_decl->get_arity(), orig_decl->get_domain());
             e_domain.push_back(m_e_sort);
             func_decl * new_decl = m_context.mk_fresh_head_predicate(orig_decl->get_name(), symbol("expl"), 
-                e_domain.size(), e_domain.c_ptr(), orig_decl);
+                e_domain.size(), e_domain.data(), orig_decl);
             m_pinned.push_back(new_decl);
-            e->get_data().m_value = new_decl;
+            value = new_decl;
 
             if (m_relation_level) {
                 assign_rel_level_kind(new_decl, orig_decl);
             }
         }
-        return e->get_data().m_value;
+        return value;
     }
 
     app * mk_explanations::get_e_lit(app * lit, unsigned e_var_idx) {
@@ -690,13 +696,13 @@ namespace datalog {
         func_decl * e_decl = get_e_decl(lit->get_decl());
         args.append(lit->get_num_args(), lit->get_args());
         args.push_back(m_manager.mk_var(e_var_idx, m_e_sort));
-        return m_manager.mk_app(e_decl, args.c_ptr());
+        return m_manager.mk_app(e_decl, args.data());
     }
 
     symbol mk_explanations::get_rule_symbol(rule * r) {
         if (r->name() == symbol::null) {
             std::stringstream sstm;
-            r->display(m_context, sstm);
+            r->display(m_context, sstm, true);
             std::string res = sstm.str();
             res = res.substr(0, res.find_last_not_of('\n')+1);
             return symbol(res.c_str());
@@ -715,7 +721,7 @@ namespace datalog {
         app_ref e_head(get_e_lit(r->get_head(), head_var), m_manager);
 
         app_ref_vector e_tail(m_manager);
-        svector<bool> neg_flags;
+        bool_vector neg_flags;
         unsigned pos_tail_sz = r->get_positive_tail_size();
         for (unsigned i=0; i<pos_tail_sz; i++) {
             unsigned e_var = next_var++;
@@ -745,14 +751,14 @@ namespace datalog {
         }
         //rule_expr contains rule function with string representation of the rule as symbol and
         //for each positive uninterpreted tail it contains its argument values and its explanation term
-        expr * rule_expr = m_decl_util.mk_rule(rule_repr, rule_expr_args.size(), rule_expr_args.c_ptr());
+        expr * rule_expr = m_decl_util.mk_rule(rule_repr, rule_expr_args.size(), rule_expr_args.data());
 
         app_ref e_record(m_manager.mk_eq(m_manager.mk_var(head_var, m_e_sort), rule_expr), m_manager);
         e_tail.push_back(e_record);
         neg_flags.push_back(false);
         SASSERT(e_tail.size()==neg_flags.size());
 
-        return m_context.get_rule_manager().mk(e_head, e_tail.size(), e_tail.c_ptr(), neg_flags.c_ptr());
+        return m_context.get_rule_manager().mk(e_head, e_tail.size(), e_tail.data(), neg_flags.data());
     }
 
     void mk_explanations::transform_rules(const rule_set & src, rule_set & dst) {
@@ -776,7 +782,7 @@ namespace datalog {
             for (unsigned i=0; i<arity; i++) {
                 lit_args.push_back(m_manager.mk_var(i, orig_decl->get_domain(i)));
             }
-            app_ref orig_lit(m_manager.mk_app(orig_decl, lit_args.c_ptr()), m_manager);
+            app_ref orig_lit(m_manager.mk_app(orig_decl, lit_args.data()), m_manager);
             app_ref e_lit(get_e_lit(orig_lit, arity), m_manager);
             app * tail[] = { e_lit.get() };
             dst.add_rule(m_context.get_rule_manager().mk(orig_lit, 1, tail, nullptr));
@@ -790,8 +796,11 @@ namespace datalog {
 
         product_relation & prod_rel = static_cast<product_relation &>(e_rel);
         SASSERT(prod_rel.size()==2);
-        SASSERT(prod_rel[0].get_plugin().is_sieve_relation());
-        SASSERT(prod_rel[1].get_plugin().is_sieve_relation());
+       
+        if (!prod_rel[0].get_plugin().is_sieve_relation())
+            throw default_exception("explanations are not supported with undefined predicates");
+        if (!prod_rel[1].get_plugin().is_sieve_relation())
+            throw default_exception("explanations are not supported with undefined predicates");
         sieve_relation * srels[] = { 
             static_cast<sieve_relation *>(&prod_rel[0]),
             static_cast<sieve_relation *>(&prod_rel[1]) };
@@ -832,10 +841,7 @@ namespace datalog {
             m_e_fact_relation = static_cast<explanation_relation *>(expl_singleton);
         }
         func_decl_set predicates(m_context.get_predicates());
-        decl_set::iterator it = predicates.begin();
-        decl_set::iterator end = predicates.end();
-        for (; it!=end; ++it) {
-            func_decl * orig_decl = *it;
+        for (func_decl* orig_decl : predicates) {
             TRACE("dl", tout << mk_pp(orig_decl, m_manager) << "\n";);
             func_decl * e_decl = get_e_decl(orig_decl);
 
@@ -876,10 +882,10 @@ namespace datalog {
         if (!m_context.generate_explanations()) {
             return nullptr;
         }
-        rule_set * res = alloc(rule_set, m_context);
+        scoped_ptr<rule_set> res = alloc(rule_set, m_context);
         transform_facts(m_context.get_rel_context()->get_rmanager(), source, *res);
         transform_rules(source, *res);
-        return res;
+        return res.detach();
     }
     
 };

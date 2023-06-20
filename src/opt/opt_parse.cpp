@@ -18,7 +18,7 @@ Revision History:
 --*/
 #include "opt/opt_context.h"
 #include "opt/opt_parse.h"
-
+#include <iostream>
 
 class opt_stream_buffer {
     std::istream & m_stream;
@@ -130,11 +130,11 @@ class wcnf {
             if (parsed_lit == 0)
                 break;
             var = abs(parsed_lit);
-            p = m.mk_const(symbol(var), m.mk_bool_sort());
+            p = m.mk_const(symbol((unsigned)var), m.mk_bool_sort());
             if (parsed_lit < 0) p = m.mk_not(p);
             ors.push_back(p);
         }
-        result = to_app(mk_or(m, ors.size(), ors.c_ptr()));
+        result = to_app(mk_or(m, ors.size(), ors.data()));
         return result;
     }
     
@@ -198,7 +198,7 @@ class opb {
         }
         app_ref p(m);
         int id = in.parse_int();
-        p = m.mk_const(symbol(id), m.mk_bool_sort());
+        p = m.mk_const(symbol((unsigned)id), m.mk_bool_sort());
         if (negated) p = m.mk_not(p);
         in.skip_whitespace();
         return p;
@@ -222,7 +222,7 @@ class opb {
         in.skip_whitespace();
         while ('0' <= *in && *in <='9') num.push_back(*in), ++in;
         num.push_back(0);
-        return rational(num.c_ptr());
+        return rational(num.data());
     }
 
     app_ref parse_coeff() {
@@ -410,7 +410,7 @@ private:
                         c = in.ch();
                     }
                     m_buffer.push_back(0);
-                    m_tokens.push_back(asymbol(symbol(m_buffer.c_ptr()), in.line()));
+                    m_tokens.push_back(asymbol(symbol(m_buffer.data()), in.line()));
                     IF_VERBOSE(10, verbose_stream() << "tok: " << m_tokens.back() << "\n");
                     continue;
                 }
@@ -456,7 +456,7 @@ private:
                 }
             }
             m_buffer.push_back(0);
-            m_tokens.push_back(asymbol(symbol(m_buffer.c_ptr()), in.line()));
+            m_tokens.push_back(asymbol(symbol(m_buffer.data()), in.line()));
             IF_VERBOSE(10, verbose_stream() << "tok: " << m_tokens.back() << "\n");
         }
     }
@@ -868,7 +868,7 @@ private:
             }
             result.push_back(term);
         }
-        return expr_ref(a.mk_add(result.size(), result.c_ptr()), m);
+        return expr_ref(a.mk_add(result.size(), result.data()), m);
     }
 
     expr_ref mk_var(symbol const& v) {

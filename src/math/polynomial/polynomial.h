@@ -16,8 +16,7 @@ Author:
 Notes:
 
 --*/
-#ifndef POLYNOMIAL_H_
-#define POLYNOMIAL_H_
+#pragma once
 
 #include "util/mpz.h"
 #include "util/rational.h"
@@ -30,6 +29,7 @@ Notes:
 #include "util/mpbqi.h"
 #include "util/rlimit.h"
 #include "util/lbool.h"
+#include "util/sign.h"
 
 class small_object_allocator;
 
@@ -43,12 +43,6 @@ namespace polynomial {
     const var null_var = UINT_MAX;
     typedef svector<var> var_vector;
     class monomial;
-
-    typedef enum { sign_neg = -1, sign_zero = 0, sign_pos = 1} sign;
-    inline sign operator-(sign s) { switch (s) { case sign_neg: return sign_pos; case sign_pos: return sign_neg; default: return sign_zero; } };
-    inline sign to_sign(int s) { return s == 0 ? sign_zero : (s > 0 ? sign_pos : sign_neg); }
-    inline sign operator*(sign a, sign b) { return to_sign((int)a * (int)b); }
-    inline bool is_zero(sign s) { return s == sign_zero; }
 
     int lex_compare(monomial const * m1, monomial const * m2);
     int lex_compare2(monomial const * m1, monomial const * m2, var min_var);
@@ -77,6 +71,7 @@ namespace polynomial {
     template<typename ValManager, typename Value = typename ValManager::numeral>
     class var2value {
     public:
+        virtual ~var2value() = default;
         virtual ValManager & m() const = 0;
         virtual bool contains(var x) const = 0;
         virtual Value const & operator()(var x) const = 0;
@@ -106,6 +101,7 @@ namespace polynomial {
 
     struct display_var_proc {
         virtual std::ostream& operator()(std::ostream & out, var x) const { return out << "x" << x; }
+        virtual ~display_var_proc() = default;
     };
 
     class polynomial;
@@ -234,6 +230,7 @@ namespace polynomial {
             del_eh * m_next;
         public:
             del_eh():m_next(nullptr) {}
+            virtual ~del_eh() = default;
             virtual void operator()(polynomial * p) = 0;
         };
 
@@ -987,7 +984,7 @@ namespace polynomial {
         */
         polynomial * to_polynomial(unsigned sz, numeral const * p, var x);
         polynomial * to_polynomial(numeral_vector const & p, var x) {
-            return to_polynomial(p.size(), p.c_ptr(), x);
+            return to_polynomial(p.size(), p.data(), x);
         }
        
         /**
@@ -1009,7 +1006,7 @@ namespace polynomial {
         void translate(polynomial const * p, unsigned xs_sz, var const * xs, numeral const * vs, polynomial_ref & r);
         void translate(polynomial const * p, var_vector const & xs, numeral_vector const & vs, polynomial_ref & r) {
             SASSERT(xs.size() == vs.size());
-            translate(p, xs.size(), xs.c_ptr(), vs.c_ptr(), r); 
+            translate(p, xs.size(), xs.data(), vs.data(), r); 
         }
 
         /**
@@ -1420,4 +1417,3 @@ inline void factor(polynomial_ref const & p, polynomial::factors & r, polynomial
 
 std::ostream & operator<<(std::ostream & out, polynomial_ref_vector const & seq);
 
-#endif

@@ -16,8 +16,7 @@ Author:
 Revision History:
 
 --*/
-#ifndef ARRAY_H_
-#define ARRAY_H_
+#pragma once
 
 template<typename T, bool CallDestructors=true>
 class array {
@@ -37,8 +36,6 @@ private:
     }
 
     char * raw_ptr() const { return reinterpret_cast<char*>(reinterpret_cast<size_t*>(m_data) - 1); }
-
-    array & operator=(array const & source);
 
     void set_data(void * mem, unsigned sz) {
         size_t * _mem = static_cast<size_t*>(mem);
@@ -70,7 +67,7 @@ private:
     }
 
 public:
-    typedef T data;
+    typedef T data_t;
     typedef T * iterator;
     typedef const T * const_iterator;
 
@@ -115,6 +112,8 @@ public:
         if (m_data && CallDestructors)
             destroy_elements();
     }
+
+    array & operator=(array const & source) = delete;
 
     // Free the memory used to store the array.
     template<typename Allocator>
@@ -182,8 +181,8 @@ public:
         return m_data + size(); 
     }
 
-    T const * c_ptr() const { return m_data; }
-    T * c_ptr() { return m_data; }
+    T const * data() const { return m_data; }
+    T * data() { return m_data; }
 
     void swap(array & other) {
         std::swap(m_data, other.m_data);
@@ -215,4 +214,3 @@ public:
     sarray(Allocator & a, unsigned sz, bool init_mem):array<T, false>(a, sz, init_mem) {}
 };
 
-#endif

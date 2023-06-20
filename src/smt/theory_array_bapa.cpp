@@ -100,9 +100,8 @@ namespace smt {
         struct sz_info {
             bool                  m_is_leaf;   // has it been split into disjoint subsets already?
             rational              m_size;      // set to >= integer if fixed in final check, otherwise -1
-            literal               m_literal;   // literal that enforces value is set.
             obj_map<enode, expr*> m_selects;
-            sz_info(): m_is_leaf(true), m_size(rational::minus_one()), m_literal(null_literal) {}
+            sz_info(): m_is_leaf(true), m_size(rational::minus_one()) {}
         };
 
         typedef std::pair<func_decl*, func_decl*> func_decls;
@@ -129,7 +128,7 @@ namespace smt {
         }
 
         bool is_true(expr* e) { return is_true(ctx().get_literal(e)); }
-        bool is_true(enode* e) { return is_true(e->get_owner()); }
+        bool is_true(enode* e) { return is_true(e->get_expr()); }
         bool is_true(literal l) { return ctx().is_relevant(l) && ctx().get_assignment(l) == l_true; }
         bool is_leaf(sz_info& i) const { return i.m_is_leaf; }
         bool is_leaf(sz_info* i) const { return is_leaf(*i); }
@@ -137,8 +136,13 @@ namespace smt {
         bool is_select(enode* n) { return th.is_select(n); }
         app_ref mk_select(expr* a, expr* i) { expr* args[2] = { a, i }; return app_ref(m_autil.mk_select(2, args), m); }
         literal get_literal(expr* e) { return ctx().get_literal(e); }
-        literal mk_literal(expr* e) { if (!ctx().e_internalized(e)) ctx().internalize(e, false); literal lit = get_literal(e); ctx().mark_as_relevant(lit); return lit; }
-        literal mk_eq(expr* a, expr* b) { literal lit = th.mk_eq(a, b, false); ctx().mark_as_relevant(lit); return lit; }
+        literal mk_literal(expr* e) { expr_ref _e(e, m); if (!ctx().e_internalized(e)) ctx().internalize(e, false); literal lit = get_literal(e); ctx().mark_as_relevant(lit); return lit; }
+        literal mk_eq(expr* a, expr* b) { 
+            expr_ref _a(a, m), _b(b, m); 
+            literal lit = th.mk_eq(a, b, false); 
+            ctx().mark_as_relevant(lit); 
+            return lit; 
+        }
         void mk_th_axiom(literal l1, literal l2) {
             literal lits[2] = { l1, l2 };
             mk_th_axiom(2, lits);
@@ -148,7 +152,8 @@ namespace smt {
             mk_th_axiom(3, lits);
         }
         void mk_th_axiom(unsigned n, literal* lits) {
-            TRACE("array", ctx().display_literals_verbose(tout, n, lits) << "\n";);
+            TRACE("card", ctx().display_literals_verbose(tout, n, lits) << "\n";);
+            IF_VERBOSE(10, ctx().display_literals_verbose(verbose_stream(), n, lits) << "\n");
             ctx().mk_th_axiom(th.get_id(), n, lits);            
         }
 
@@ -162,7 +167,7 @@ namespace smt {
                     for (enode* parent : enode::parents(set)) {
                         if (is_select(parent) && parent->get_arg(0)->get_root() == set) {
                             if (is_true(parent)) {
-                                v.m_selects.insert(parent->get_arg(1)->get_root(), parent->get_owner());
+                                v.m_selects.insert(parent->get_arg(1)->get_root(), parent->get_expr());
                             }
                         }
                     }                    
@@ -224,7 +229,7 @@ namespace smt {
             SASSERT(i2.m_is_leaf);
             expr* s = sz1->get_arg(0);
             expr* t = sz2->get_arg(0);
-            if (m.get_sort(s) != m.get_sort(t)) {
+            if (s->get_sort() != t->get_sort()) {
                 return true;
             }
             enode* r1 = get_root(s);
@@ -267,14 +272,16 @@ namespace smt {
             std::cout << smt << "\n";
             std::cout << tns << "\n";
 #endif
+#if 0
             if (tns == sz1) {
                 std::cout << "SEEN " << tms << "\n";
             }
             if (tns == sz2) {
                 std::cout << "SEEN " << smt << "\n";                
             }
-            ctx().push_trail(value_trail<context, bool>(i1.m_is_leaf, false));
-            ctx().push_trail(value_trail<context, bool>(i2.m_is_leaf, false));
+#endif
+            ctx().push_trail(value_trail<bool>(i1.m_is_leaf, false));
+            ctx().push_trail(value_trail<bool>(i2.m_is_leaf, false));
             expr_ref k1(m), k2(m), k3(m);
             expr_ref sz_tms(m), sz_tns(m), sz_smt(m);
             k1 = m_autil.mk_card(tms);
@@ -314,21 +321,23 @@ namespace smt {
         /**
            Enforce V
          */
-        lbool ensure_values_assigned() {
+        lbool ensure_values_assigned() {            
             lbool result = l_true;
             for (auto const& kv : m_sizeof) {
                 app* k = kv.m_key;
                 sz_info& i = *kv.m_value;
-                if (is_leaf(&i) && (i.m_literal == null_literal || !is_true(i.m_literal))) {
+                if (is_leaf(&i)) {
                     rational value;
                     expr* sz  = k->get_arg(1);
                     if (!m_arith_value.get_value(sz, value)) {
                         return l_undef;
                     }  
                     literal lit = mk_eq(sz, m_arith.mk_int(value));
+                    if (lit != true_literal && is_true(lit)) {
+                        ctx().push_trail(value_trail<rational>(i.m_size, value));
+                        continue;
+                    }
                     ctx().set_true_first_flag(lit.var());
-                    ctx().push_trail(value_trail<context, literal>(i.m_literal, lit));
-                    ctx().push_trail(value_trail<context, rational>(i.m_size, value));
                     result = l_false;
                 }
             }
@@ -351,7 +360,7 @@ namespace smt {
                         expr_ref idx = mk_index_skolem(set_sz, set, k);
                         app_ref sel(mk_select(set, idx), m);
                         mk_th_axiom(~sz_lit, le_lit, mk_literal(sel));
-                        TRACE("array", tout << idx << " " << sel << " " << i.m_size << "\n";);
+                        TRACE("card", tout << idx << " " << sel << " " << i.m_size << "\n";);
                     }
                     return l_false;
                 }
@@ -362,7 +371,7 @@ namespace smt {
         // create skolem function that is injective on integers (ensures uniqueness).
         expr_ref mk_index_skolem(app* sz, expr* a, unsigned n) {
             func_decls fg;
-            sort* s = m.get_sort(a);
+            sort* s = a->get_sort();
             if (!m_index_skolems.find(s, fg)) {
                 sort* idx_sort = get_array_domain(s, 0);
                 sort* dom1[2] = { s, m_arith.mk_int() };
@@ -378,8 +387,9 @@ namespace smt {
             expr_ref nV(m_arith.mk_int(n), m);
             expr_ref result(m.mk_app(fg.first, a, nV), m);   
             expr_ref le(m_arith.mk_le(sz->get_arg(1), nV), m);
+            expr_ref fr(m.mk_app(fg.second, result), m);
             // set-has-size(a, k) => k <= n or g(f(a,n)) = n 
-            mk_th_axiom(~mk_literal(sz), mk_literal(le), mk_eq(nV, m.mk_app(fg.second, result)));
+            mk_th_axiom(~mk_literal(sz), mk_literal(le), mk_eq(nV, fr));
             return result;
         }
 
@@ -416,26 +426,31 @@ namespace smt {
                 if (info.m_selects.size() > 1) {
                     ptr_vector<expr> args;
                     for (auto const& kv : info.m_selects) {
-                        args.push_back(kv.m_key->get_owner());
+                        args.push_back(kv.m_key->get_expr());
                     }
-                    expr_ref diff(m.mk_distinct(args.size(), args.c_ptr()), m);
-                    lits.push_back(~mk_literal(diff));
+                    if (info.m_selects.size() == 2) {
+                        lits.push_back(mk_eq(args[0], args[1]));
+                    }
+                    else {
+                        expr_ref diff(m.mk_distinct_expanded(args.size(), args.data()), m);
+                        lits.push_back(~mk_literal(diff));
+                    }
                 }
                 expr_ref ge(m_arith.mk_ge(sz->get_arg(1), m_arith.mk_int(info.m_selects.size())), m);
                 lits.push_back(mk_literal(ge));
-                mk_th_axiom(lits.size(), lits.c_ptr());
+                mk_th_axiom(lits.size(), lits.data());
                 return l_false;
             }
             return l_true;
         }
 
-        class remove_sz : public trail<context> {
+        class remove_sz : public trail {
+            ast_manager& m;
             obj_map<app, sz_info*> & m_table;
             app*                     m_obj;
         public:
-            remove_sz(obj_map<app, sz_info*>& tab, app* t): m_table(tab), m_obj(t) {}
-            ~remove_sz() override {}
-            void undo(context& ctx) override { dealloc(m_table[m_obj]); m_table.remove(m_obj); }
+            remove_sz(ast_manager& m, obj_map<app, sz_info*>& tab, app* t): m(m), m_table(tab), m_obj(t) { }
+            void undo() override { m.dec_ref(m_obj); dealloc(m_table[m_obj]); m_table.remove(m_obj); }
         };
 
         std::ostream& display(std::ostream& out) {
@@ -486,7 +501,7 @@ namespace smt {
             expr* s = term->get_arg(0);
             expr* n = term->get_arg(1);
             mk_th_axiom(~lit, mk_literal(m_arith.mk_ge(n, m_arith.mk_int(0))));
-            sort_size const& sz = m.get_sort(s)->get_num_elements();
+            sort_size const& sz = s->get_sort()->get_num_elements();
             if (sz.is_infinite()) {
                 mk_th_axiom(~lit, mk_eq(th.mk_default(s), m.mk_false()));
             }
@@ -498,7 +513,8 @@ namespace smt {
             m_sizeof.insert(term, alloc(sz_info));
             m_size_limit.insert(s, rational(2));
             assert_size_limit(s, n);
-            ctx().push_trail(remove_sz(m_sizeof, term));
+            m.inc_ref(term);
+            ctx().push_trail(remove_sz(m, m_sizeof, term));
         }
 
         /**
@@ -525,10 +541,10 @@ namespace smt {
             lbool r = trace_call("ensure_functional", ensure_functional());
             if (r == l_true) update_indices();
             if (r == l_true) r = trace_call("ensure_disjoint", ensure_disjoint());
-            if (r == l_true) r = trace_call("eensure_values_assigned", ensure_values_assigned());
+            if (r == l_true) r = trace_call("ensure_values_assigned", ensure_values_assigned());
             if (r == l_true) r = trace_call("ensure_non_empty", ensure_non_empty());
             if (r == l_true) r = trace_call("ensure_no_overflow", ensure_no_overflow());
-            CTRACE("array", r != l_true, display(tout););
+            CTRACE("card", r != l_true, display(tout););
             switch (r) {
             case l_true:
                 return FC_DONE;
@@ -570,7 +586,7 @@ namespace smt {
         
         bool is_size_limit(app* e, expr*& set, expr*& sz) {
             func_decl* d = nullptr;
-            if (e->get_num_args() > 0 && m_size_limit_sort2skolems.find(m.get_sort(e->get_arg(0)), d) && d == e->get_decl()) {
+            if (e->get_num_args() > 0 && m_size_limit_sort2skolems.find(e->get_arg(0)->get_sort(), d) && d == e->get_decl()) {
                 set = e->get_arg(0);
                 sz  = e->get_arg(1);
                 return true;
@@ -584,7 +600,7 @@ namespace smt {
 
         app_ref mk_size_limit(expr* set, expr* sz) {
             func_decl* sk = nullptr;
-            sort* s = m.get_sort(set);
+            sort* s = set->get_sort();
             if (!m_size_limit_sort2skolems.find(s, sk)) {
                 sort* dom[3] = { s, m_arith.mk_int(), m_arith.mk_int() };
                 sk = m.mk_fresh_func_decl("value-limit", "", 3, dom, m.mk_bool_sort());
@@ -607,7 +623,7 @@ namespace smt {
                 expr* sz =  kv.m_key->get_arg(1);
                 assumptions.push_back(mk_size_limit(set, sz));
             }            
-            TRACE("array", tout << "ASSUMPTIONS: " << assumptions << "\n";);
+            TRACE("card", tout << "ASSUMPTIONS: " << assumptions << "\n";);
         }
     
     };

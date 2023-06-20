@@ -49,7 +49,6 @@ Notes:
 #include "ast/well_sorted.h"
 #include "ast/rewriter/var_subst.h"
 #include "ast/normal_forms/name_exprs.h"
-#include "ast/act_cache.h"
 #include "ast/ast_pp.h"
 #include "ast/rewriter/quant_hoist.h"
 #include "ast/ast_util.h"
@@ -165,14 +164,11 @@ public:
             }
         }
         TRACE("hnf",
-              tout << mk_pp(n, m) << "\n==>\n";
-              for (unsigned i = 0; i < result.size(); ++i) {
-                  tout << mk_pp(result[i].get(), m) << "\n";
-              });
+            tout << mk_pp(n, m) << "\n==>\n" << result << "\n";);
     }
 
     bool checkpoint() {
-        return !m.canceled();
+        return m.inc();
     }
 
     void set_name(symbol const& n) {
@@ -244,7 +240,12 @@ private:
                 premise = mk_modus_ponens(premise, p1);
                 fml = fml1;
             }
+            else if (fml1 != fml) {
+                premise = mk_modus_ponens(premise, m.mk_rewrite(fml, fml1));
+                fml = fml1;
+            }
         }
+        SASSERT(!premise || (fml1 == fml && fml == m.get_fact(premise)));
         head = fml0;
         while (m.is_implies(head, e1, e2)) {
             m_body.push_back(e1);
@@ -273,7 +274,7 @@ private:
 
             if (premise) {
                 expr_ref f1 = bind_variables(mk_implies(m_body, head));
-                expr* f2 = m.mk_and(sz, m_todo.c_ptr()+m_todo.size()-sz);
+                expr* f2 = m.mk_and(sz, m_todo.data()+m_todo.size()-sz);
                 proof_ref p2(m), p3(m);
                 p2 = m.mk_def_axiom(m.mk_iff(f1, f2));
                 p3 = mk_quant_intro(fml, f1, p);                    
@@ -350,7 +351,7 @@ private:
             is_disj = true;
             _body.push_back(mk_not(m, e1));
             _body.push_back(e2);
-            disjs = _body.c_ptr();
+            disjs = _body.data();
             num_disj = 2;
             negate_args = false;
         }
@@ -375,7 +376,7 @@ private:
                     }
                 }
                 if (produce_proofs()) {
-                    proof* p = m.mk_apply_defs(body.get(), head, defs.size(), defs.c_ptr());
+                    proof* p = m.mk_apply_defs(body.get(), head, defs.size(), defs.data());
                     m_refs.push_back(p);
                     m_memoize_proof.insert(b, p);
                 }
@@ -403,9 +404,10 @@ private:
             }
         }
         func_decl_ref f(m);
-        f = m.mk_fresh_func_decl(m_name.str().c_str(), "", sorts1.size(), sorts1.c_ptr(), m.mk_bool_sort());
+        auto str = m_name.str();
+        f = m.mk_fresh_func_decl(str.c_str(), "", sorts1.size(), sorts1.data(), m.mk_bool_sort());
         m_fresh_predicates.push_back(f);
-        return app_ref(m.mk_app(f, args.size(), args.c_ptr()), m);
+        return app_ref(m.mk_app(f, args.size(), args.data()), m);
     }
 
     void eliminate_disjunctions(expr_ref_vector& body, proof_ref_vector& proofs) {
@@ -448,18 +450,18 @@ private:
         case 1: 
             return app_ref(m.mk_implies(body[0], head), m);
         default:
-            return app_ref(m.mk_implies(m.mk_and(body.size(), body.c_ptr()), head), m);
+            return app_ref(m.mk_implies(m.mk_and(body.size(), body.data()), head), m);
         }        
     }
 
 
-    proof_ref mk_congruence(proof* p1, expr_ref_vector const& body, expr* head, proof_ref_vector& defs) {
+    proof_ref mk_congruence(proof* p, expr_ref_vector const& body, expr* head, proof_ref_vector& defs) {
         if (defs.empty()) {
-            return proof_ref(p1, m);
+            return proof_ref(p, m);
         }
         else {
-            SASSERT(p1);
-            proof_ref p2(m), p3(m);
+            SASSERT(p);
+            proof_ref p1(p, m), p2(m), p3(m);
             app_ref fml = mk_implies(body, head);
             expr* fact = m.get_fact(p1);
             if (m.is_iff(fact)) {
@@ -468,10 +470,10 @@ private:
             }
             VERIFY (m.is_oeq(fact) || m.is_eq(fact));
             app* e2 = to_app(to_app(fact)->get_arg(1));
-            p2 = m.mk_oeq_congruence(e2, fml, defs.size(), defs.c_ptr());
+            p2 = m.mk_oeq_congruence(e2, fml, defs.size(), defs.data());
             p3 = mk_transitivity(p1, p2);
             defs.reset();
-            return proof_ref(p3, m);
+            return p3;
         }
     }
 
@@ -505,7 +507,7 @@ private:
         if (m_sorts.empty()) {
             return expr_ref(e, m);
         }
-        return expr_ref(m.mk_forall(m_sorts.size(), m_sorts.c_ptr(), m_names.c_ptr(), e), m);
+        return expr_ref(m.mk_forall(m_sorts.size(), m_sorts.data(), m_names.data(), e), m);
     }
 
 };

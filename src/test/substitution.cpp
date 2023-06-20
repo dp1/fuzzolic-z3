@@ -12,6 +12,7 @@ Copyright (c) 2015 Microsoft Corporation
 #include "ast/ast_pp.h"
 #include "ast/arith_decl_plugin.h"
 #include "ast/reg_decl_plugins.h"
+#include <iostream>
 
 void tst_substitution()
 {
@@ -52,7 +53,7 @@ void tst_substitution()
     sorts.push_back(m.mk_bool_sort());
     names.push_back(symbol("dude"));
     body = m.mk_and(m.mk_eq(v1,v2), m.mk_eq(v3,v4));
-    q = m.mk_forall(sorts.size(), sorts.c_ptr(), names.c_ptr(), body);
+    q = m.mk_forall(sorts.size(), sorts.data(), names.data(), body);
     subst.apply(q, res);
     TRACE("substitution", tout << mk_pp(q, m) << "\n->\n" << mk_pp(res, m) << "\n";);
 

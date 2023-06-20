@@ -17,8 +17,7 @@ Author:
 Notes:
 
 --*/
-#ifndef SPECIAL_RELATIONS_TACTIC_H_
-#define SPECIAL_RELATIONS_TACTIC_H_
+#pragma once
 
 #include "tactic/tactic.h"
 #include "tactic/tactical.h"
@@ -48,9 +47,7 @@ public:
     special_relations_tactic(ast_manager & m, params_ref const & ref = params_ref()): 
         m(m), m_params(ref), m_pm(m) {}
 
-    ~special_relations_tactic() override {}
-
-    void updt_params(params_ref const & p) override { m_params = p; }
+    void updt_params(params_ref const & p) override { m_params.append(p); }
     
     void collect_param_descrs(param_descrs & r) override { }
     
@@ -59,6 +56,8 @@ public:
     void cleanup() override {}
 
     tactic * translate(ast_manager & m) override { return alloc(special_relations_tactic, m, m_params); }
+
+    char const* name() const override { return "special_relations"; }
 
 };
 
@@ -69,4 +68,3 @@ tactic * mk_special_relations_tactic(ast_manager & m, params_ref const & p = par
   ADD_TACTIC("special-relations", "detect and replace by special relations.", "mk_special_relations_tactic(m, p)")
 */
 
-#endif

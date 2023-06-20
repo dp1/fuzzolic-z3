@@ -18,12 +18,12 @@ Revision History:
 --*/
 
 #include<iostream>
-#include<mutex>
 #include<time.h>
 #include<signal.h>
 #include "util/stopwatch.h"
 #include "smt/params/smt_params.h"
 #include "ast/arith_decl_plugin.h"
+#include "ast/reg_decl_plugins.h"
 #include "muz/rel/dl_compiler.h"
 #include "muz/transforms/dl_mk_filter_rules.h"
 #include "muz/rel/dl_finite_product_relation.h"
@@ -33,6 +33,7 @@ Revision History:
 #include "muz/fp/datalog_parser.h"
 #include "shell/datalog_frontend.h"
 #include "util/timeout.h"
+#include "util/mutex.h"
 
 static stopwatch g_overall_time;
 static stopwatch g_piece_timer;
@@ -43,7 +44,7 @@ static datalog::rule_set * g_orig_rules;
 static datalog::instruction_block * g_code;
 static datalog::execution_context * g_ectx;
 
-static std::mutex *display_stats_mux = new std::mutex;
+static mutex *display_stats_mux = new mutex;
 
 
 static void display_statistics(
@@ -55,7 +56,7 @@ static void display_statistics(
     bool verbose
     )
 {
-    std::lock_guard<std::mutex> lock(*display_stats_mux);
+    lock_guard lock(*display_stats_mux);
     g_piece_timer.stop();
     unsigned t_other = static_cast<int>(g_piece_timer.get_seconds()*1000);
     g_overall_time.stop();
@@ -108,7 +109,7 @@ static void display_statistics() {
 
 static void on_timeout() {
     display_statistics();
-    exit(0);
+    _Exit(0);
 }
 
 static void STD_CALL on_ctrl_c(int) {
@@ -122,6 +123,7 @@ unsigned read_datalog(char const * file) {
     IF_VERBOSE(1, verbose_stream() << "Z3 Datalog Engine\n";);
     smt_params     s_params;
     ast_manager m;
+    reg_decl_plugins(m);
     datalog::register_engine re;
     g_overall_time.start();
     register_on_timeout_proc(on_timeout);

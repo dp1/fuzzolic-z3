@@ -43,13 +43,11 @@ class qe_tactic : public tactic {
         }
 
         void checkpoint() {
-            if (m.canceled()) 
-                throw tactic_exception(m.limit().get_cancel_msg());
+            tactic::checkpoint(m);
         }
 
         void operator()(goal_ref const & g, 
                         goal_ref_buffer & result) {
-            SASSERT(g->is_well_sorted());
             tactic_report report("qe", *g);
             m_fparams.m_model = g->models_enabled();
             proof_ref new_pr(m);
@@ -67,6 +65,7 @@ class qe_tactic : public tactic {
                 m_qe(m.mk_true(), f, new_f);
                 new_pr = nullptr;
                 if (produce_proofs) {
+                    new_pr = m.mk_rewrite(f, new_f);
                     new_pr = m.mk_modus_ponens(g->pr(i), new_pr);
                 }
                 g->update(i, new_f, new_pr, g->dep(i));                
@@ -74,8 +73,6 @@ class qe_tactic : public tactic {
             g->inc_depth();
             g->elim_true();
             result.push_back(g.get());
-            TRACE("qe", g->display(tout););
-            SASSERT(g->is_well_sorted());
         }
 
         void collect_statistics(statistics & st) const {
@@ -103,9 +100,11 @@ public:
         dealloc(m_imp);
     }
 
+    char const* name() const override { return "qe"; }
+
     void updt_params(params_ref const & p) override {
-        m_params = p;
-        m_imp->updt_params(p);
+        m_params.append(p);
+        m_imp->updt_params(m_params);
     }
 
    

@@ -35,11 +35,12 @@ namespace {
     struct interval {
         // l < h: [l, h]
         // l > h: [0, h] U [l, UMAX_INT]
-        uint64_t l, h;
-        unsigned sz;
-        bool tight;
+        uint64_t l = 0, h = 0;
+        unsigned sz = 0;
+        bool tight = true;
 
         interval() {}
+
         interval(uint64_t l, uint64_t h, unsigned sz, bool tight = false) : l(l), h(h), sz(sz), tight(tight) {
             // canonicalize full set
             if (is_wrapped() && l == h + 1) {
@@ -50,8 +51,7 @@ namespace {
         }
 
         bool invariant() const {
-            return l <= uMaxInt(sz) && h <= uMaxInt(sz) &&
-                (!is_wrapped() || l != h+1);
+            return l <= uMaxInt(sz) && h <= uMaxInt(sz) && (!is_wrapped() || l != h+1);
         }
 
         bool is_full() const { return l == 0 && h == uMaxInt(sz); }
@@ -67,22 +67,17 @@ namespace {
         bool implies(const interval& b) const {
             if (b.is_full())
                 return true;
-            if (is_full())
+            else if (is_full())
                 return false;
-
-            if (is_wrapped()) {
+            else if (is_wrapped()) 
                 // l >= b.l >= b.h >= h
-                return b.is_wrapped() && h <= b.h && l >= b.l;
-            } 
-            else if (b.is_wrapped()) {
+                return b.is_wrapped() && h <= b.h && l >= b.l;            
+            else if (b.is_wrapped()) 
                 // b.l > b.h >= h >= l
                 // h >= l >= b.l > b.h
-                return h <= b.h || l >= b.l;
-            } 
-            else {
-                // 
-                return l >= b.l && h <= b.h;
-            }
+                return h <= b.h || l >= b.l;            
+            else 
+                return l >= b.l && h <= b.h;            
         }
 
         /// return false if intersection is unsat
@@ -98,28 +93,26 @@ namespace {
 
             if (is_wrapped()) {
                 if (b.is_wrapped()) {
-                    if (h >= b.l) {
+                    if (h >= b.l)
                         result = b;
-                    } else if (b.h >= l) {
+                    else if (b.h >= l)
                         result = *this;
-                    } else {
+                    else
                         result = interval(std::max(l, b.l), std::min(h, b.h), sz);
-                    }
-                } else {
-                    return b.intersect(*this, result);
                 }
+                else 
+                    return b.intersect(*this, result);                
             } 
             else if (b.is_wrapped()) {
                 // ... b.h ... l ... h ... b.l ..
-                if (h < b.l && l > b.h) {
-                    return false;
-                }
+                if (h < b.l && l > b.h)
+                    return false;                
                 // ... l ... b.l ... h ...
-                if (h >= b.l && l <= b.h) {
+                if (h >= b.l && l <= b.h)
                     result = b;
-                } else if (h >= b.l) {
+                else if (h >= b.l) 
                     result = interval(b.l, h, sz);
-                } else {
+                else {
                     // ... l .. b.h .. h .. b.l ...
                     SASSERT(l <= b.h);
                     result = interval(l, std::min(h, b.h), sz);
@@ -136,20 +129,16 @@ namespace {
 
         /// return false if negation is empty
         bool negate(interval& result) const {
-            if (!tight) {
+            if (!tight) 
                 result = interval(0, uMaxInt(sz), true);
-                return true;
-            }
-
-            if (is_full())
+            else if (is_full())
                 return false;
-            if (l == 0) {
+            else if (l == 0) 
                 result = interval(h + 1, uMaxInt(sz), sz);
-            } else if (uMaxInt(sz) == h) {
+            else if (uMaxInt(sz) == h) 
                 result = interval(0, l - 1, sz);
-            } else {
-                result = interval(h + 1, l - 1, sz);
-            }
+            else
+                result = interval(h + 1, l - 1, sz);            
             return true;
         }
     };
@@ -163,9 +152,9 @@ namespace {
 
 
     struct undo_bound {
-        expr* e;
+        expr* e = nullptr;
         interval b;
-        bool fresh;
+        bool fresh = false;
         undo_bound(expr* e, const interval& b, bool fresh) : e(e), b(b), fresh(fresh) {}
     };
 
@@ -176,7 +165,7 @@ namespace {
 
         ast_manager&       m;
         params_ref         m_params;
-        bool               m_propagate_eq;
+        bool               m_propagate_eq = false;
         bv_util            m_bv;
         vector<undo_bound> m_scopes;
         map                m_bound;
@@ -224,7 +213,8 @@ namespace {
                     v = lhs;
                     return true;
                 }
-            } else if (m.is_eq(e, lhs, rhs)) {
+            } 
+            else if (m.is_eq(e, lhs, rhs)) {
                 if (is_number(lhs, n, sz)) {
                     if (m_bv.is_numeral(rhs))
                         return false;
@@ -241,64 +231,6 @@ namespace {
             return false;
         }
 
-#if 0
-        expr_set* get_expr_vars(expr* t) {
-            unsigned id = t->get_id();
-            m_expr_vars.reserve(id + 1);
-            expr_set*& entry = m_expr_vars[id];
-            if (entry)
-                return entry;
-
-            expr_set* set = alloc(expr_set);
-            entry = set;
-
-            if (!m_bv.is_numeral(t))
-                set->insert(t, true);
-
-            if (!is_app(t))
-                return set;
-
-            app* a = to_app(t);
-            for (unsigned i = 0; i < a->get_num_args(); ++i) {
-                expr_set* set_arg = get_expr_vars(a->get_arg(i));
-                for (expr_set::iterator I = set_arg->begin(), E = set_arg->end(); I != E; ++I) {
-                    set->insert(I->m_key, true);
-                }
-            }
-            return set;
-        }
-#endif
-
-#if 0
-        expr_cnt* get_expr_bounds(expr* t) {
-            unsigned id = t->get_id();
-            m_bound_exprs.reserve(id + 1);
-            expr_cnt*& entry = m_bound_exprs[id];
-            if (entry)
-                return entry;
-
-            expr_cnt* set = alloc(expr_cnt);
-            entry = set;
-
-            if (!is_app(t))
-                return set;
-
-            interval b;
-            expr* e;
-            if (is_bound(t, e, b)) {
-                set->insert_if_not_there2(e, 0)->get_data().m_value++;
-            }
-
-            app* a = to_app(t);
-            for (unsigned i = 0; i < a->get_num_args(); ++i) {
-                expr_cnt* set_arg = get_expr_bounds(a->get_arg(i));
-                for (expr_cnt::iterator I = set_arg->begin(), E = set_arg->end(); I != E; ++I) {
-                    set->insert_if_not_there2(I->m_key, 0)->get_data().m_value += I->m_value;
-                }
-            }
-            return set;
-        }
-#endif
 
     public:
         bv_bounds_simplifier(ast_manager& m, params_ref const& p) : m(m), m_params(p), m_bv(m) {
@@ -310,19 +242,16 @@ namespace {
         }
 
         static void get_param_descrs(param_descrs& r) {
-            r.insert("propagate-eq", CPK_BOOL, "(default: false) propagate equalities from inequalities");
+            r.insert("propagate-eq", CPK_BOOL, "propagate equalities from inequalities", "false");
         }
 
         ~bv_bounds_simplifier() override {
-            for (unsigned i = 0, e = m_expr_vars.size(); i < e; ++i) {
-                dealloc(m_expr_vars[i]);
-            }
-            for (unsigned i = 0, e = m_bound_exprs.size(); i < e; ++i) {
-                dealloc(m_bound_exprs[i]);
-            }
+            for (auto* v : m_expr_vars) dealloc(v);
+            for (auto* b : m_bound_exprs) dealloc(b);
         }
 
         bool assert_expr(expr * t, bool sign) override {
+            TRACE("bv", tout << expr_ref(t, m) << "\n";);
             while (m.is_not(t, t)) {
                 sign = !sign;
             }
@@ -330,9 +259,12 @@ namespace {
             interval b;
             expr* t1;
             if (is_bound(t, t1, b)) {
-                SASSERT(!m_bv.is_numeral(t1));
-                if (sign)
-                    VERIFY(b.negate(b));
+                SASSERT(!m_bv.is_numeral(t1));                
+                if (sign) {
+                    if (!b.negate(b)) {
+                        return false;
+                    }
+                }
 
                 TRACE("bv", tout << (sign?"(not ":"") << mk_pp(t, m) << (sign ? ")" : "") << ": " << mk_pp(t1, m) << " in " << b << "\n";);
                 map::obj_map_entry* e = m_bound.find_core(t1);
@@ -389,11 +321,12 @@ namespace {
             } else if (m_bound.find(t1, ctx)) {
                 if (ctx.implies(b)) {
                     result = m.mk_true();
-                } else if (!b.intersect(ctx, intr)) {
+                } 
+                else if (!b.intersect(ctx, intr)) {
                     result = m.mk_false();
-                } else if (m_propagate_eq && intr.is_singleton()) {
-                    result = m.mk_eq(t1, m_bv.mk_numeral(rational(intr.l, rational::ui64()),
-                                                         m.get_sort(t1)));
+                } 
+                else if (m_propagate_eq && intr.is_singleton()) {
+                    result = m.mk_eq(t1, m_bv.mk_numeral(rational(intr.l, rational::ui64()), t1->get_sort()));
                 }
             }
 
@@ -475,15 +408,6 @@ namespace {
                 if (contains(t, v.m_key)) return true;
             }
 
-#if 0
-            expr_set* used_exprs = get_expr_vars(t);
-            for (map::iterator I = m_bound.begin(), E = m_bound.end(); I != E; ++I) {
-                if (contains(t, I->m_key)) return true;
-                if (I->m_value.is_singleton() && used_exprs->contains(I->m_key))
-                    return true;
-            }
-#endif
-
             expr* t1;
             interval b;
             // skip common case: single bound constraint without any context for simplification
@@ -494,13 +418,6 @@ namespace {
             if (contains_bound(t)) {
                 return true;
             }
-#if 0
-            expr_cnt* bounds = get_expr_bounds(t);
-            for (expr_cnt::iterator I = bounds->begin(), E = bounds->end(); I != E; ++I) {
-                if (I->m_value > 1 || m_bound.contains(I->m_key))
-                    return true;
-            }
-#endif
             return false;
         }
 
@@ -619,22 +536,19 @@ namespace {
         }
 
         static void get_param_descrs(param_descrs& r) {
-            r.insert("propagate-eq", CPK_BOOL, "(default: false) propagate equalities from inequalities");
+            r.insert("propagate-eq", CPK_BOOL, "propagate equalities from inequalities", "false");
         }
 
         ~dom_bv_bounds_simplifier() override {
-            for (unsigned i = 0, e = m_expr_vars.size(); i < e; ++i) {
-                dealloc(m_expr_vars[i]);
-            }
-            for (unsigned i = 0, e = m_bound_exprs.size(); i < e; ++i) {
-                dealloc(m_bound_exprs[i]);
-            }
+            for (auto* e : m_expr_vars)
+                dealloc(e);
+            for (auto* b : m_bound_exprs)
+                dealloc(b);
         }
 
         bool assert_expr(expr * t, bool sign) override {
-            while (m.is_not(t, t)) {
-                sign = !sign;
-            }
+            while (m.is_not(t, t)) 
+                sign = !sign;            
 
             interval b;
             expr* t1;
@@ -654,7 +568,8 @@ namespace {
                         return true;
                     m_scopes.push_back(undo_bound(t1, old, false));
                     old = intr;
-                } else {
+                } 
+                else {
                     m_bound.insert(t1, b);
                     m_scopes.push_back(undo_bound(t1, interval(), true));
                 }
@@ -675,9 +590,8 @@ namespace {
                 return;
 
             bool sign = false;
-            while (m.is_not(t, t)) {
-                sign = !sign;
-            }
+            while (m.is_not(t, t)) 
+                sign = !sign;            
 
             if (!is_bound(t, t1, b))
                 return;
@@ -692,27 +606,21 @@ namespace {
 
             interval ctx, intr;
             bool was_updated = true;
-            if (b.is_full() && b.tight) {
-                r = m.mk_true();
-            } 
+            if (b.is_full() && b.tight) 
+                r = m.mk_true();            
             else if (m_bound.find(t1, ctx)) {
-                if (ctx.implies(b)) {
-                    r = m.mk_true();
-                } 
-                else if (!b.intersect(ctx, intr)) {
-                    r = m.mk_false();
-                } 
-                else if (m_propagate_eq && intr.is_singleton()) {
+                if (ctx.implies(b)) 
+                    r = m.mk_true();                
+                else if (!b.intersect(ctx, intr))
+                    r = m.mk_false();                
+                else if (m_propagate_eq && intr.is_singleton()) 
                     r = m.mk_eq(t1, m_bv.mk_numeral(rational(intr.l, rational::ui64()),
-                                                    m.get_sort(t1)));
-                }
-                else {
-                    was_updated = false;
-                }
+                                                    t1->get_sort()));                
+                else 
+                    was_updated = false;                
             }
-            else {
-                was_updated = false;
-            }
+            else 
+                was_updated = false;            
 
             TRACE("bv", tout << mk_pp(t, m) << " " << b << " (ctx: " << ctx << ") (intr: " << intr << "): " << r << "\n";);
             if (sign && was_updated)
@@ -727,18 +635,16 @@ namespace {
             while (!todo.empty()) {
                 t = todo.back();
                 todo.pop_back();
-                if (mark.is_marked(t)) {
-                    continue;
-                }
+                if (mark.is_marked(t))
+                    continue;                
                 if (t == v) {
                     todo.reset();
                     return true;
                 }
                 mark.mark(t);
             
-                if (!is_app(t)) {
-                    continue;
-                }
+                if (!is_app(t)) 
+                    continue;                
                 app* a = to_app(t);
                 todo.append(a->get_num_args(), a->get_args());
             }
@@ -753,14 +659,11 @@ namespace {
             while (!todo.empty()) {
                 t = todo.back();
                 todo.pop_back();
-                if (mark1.is_marked(t)) {
-                    continue;
-                }
-                mark1.mark(t);
-            
-                if (!is_app(t)) {
-                    continue;
-                }
+                if (mark1.is_marked(t)) 
+                    continue;                
+                mark1.mark(t);            
+                if (!is_app(t)) 
+                    continue;                
                 interval b;
                 expr* e;
                 if (is_bound(t, e, b)) {
@@ -791,14 +694,13 @@ namespace {
                 m_scopes.reset();
                 return;
             }
-            for (unsigned i = m_scopes.size()-1; i >= target; --i) {
+            for (unsigned i = m_scopes.size(); i-- > target; ) {
                 undo_bound& undo = m_scopes[i];
                 SASSERT(m_bound.contains(undo.e));
-                if (undo.fresh) {
+                if (undo.fresh) 
                     m_bound.erase(undo.e);
-                } else {
-                    m_bound.insert(undo.e, undo.b);
-                }
+                else 
+                    m_bound.insert(undo.e, undo.b);                
             }
             m_scopes.shrink(target);
         }

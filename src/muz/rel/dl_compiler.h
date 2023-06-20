@@ -16,11 +16,8 @@ Author:
 Revision History:
 
 --*/
-#ifndef DL_COMPILER_H_
-#define DL_COMPILER_H_
+#pragma once
 
-#include<iostream>
-#include<list>
 #include<utility>
 
 #include "ast/ast.h"
@@ -284,5 +281,4 @@ namespace datalog {
 
 };
 
-#endif /* DL_COMPILER_H_ */
 

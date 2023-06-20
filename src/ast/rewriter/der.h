@@ -18,8 +18,7 @@ Revision History:
     Christoph Wintersteiger, 2010-03-30: Added Destr. Multi-Equality Resolution
 
 --*/
-#ifndef DER_H_
-#define DER_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "ast/rewriter/var_subst.h"
@@ -123,16 +122,16 @@ Revision History:
    (forall (X Y) (or X /= s C[X])) --> (forall (Y) C[Y])
 */
 class der {
-    ast_manager &   m_manager;
+    ast_manager &   m;
     var_subst       m_subst;
     expr_ref_buffer m_new_exprs;
     
-    ptr_vector<expr> m_map;
+    expr_ref_vector  m_map;
     int_vector       m_pos2var;
     ptr_vector<var>  m_inx2var;
     unsigned_vector  m_order;
     expr_ref_vector  m_subst_map;
-    expr_ref_buffer  m_new_args;
+    expr_ref_vector  m_new_args;
 
     /**
        \brief Return true if e can be viewed as a variable disequality. 
@@ -146,15 +145,16 @@ class der {
     */
     bool is_var_diseq(expr * e, unsigned num_decls, var *& v, expr_ref & t);
 
+    bool is_var_eq(expr* e, unsigned num_decls, var*& v, expr_ref& t);
+
     void get_elimination_order();
     void create_substitution(unsigned sz);
-    void apply_substitution(quantifier * q, expr_ref & r);
+    void apply_substitution(quantifier * q, expr_ref_vector& lits, bool is_or, expr_ref & r);
 
     void reduce1(quantifier * q, expr_ref & r, proof_ref & pr);
 
 public:
-    der(ast_manager & m):m_manager(m),m_subst(m),m_new_exprs(m),m_subst_map(m),m_new_args(m) {}
-    ast_manager & m() const { return m_manager; }
+    der(ast_manager & m):m(m),m_subst(m),m_new_exprs(m),m_map(m), m_subst_map(m),m_new_args(m) {}
     void operator()(quantifier * q, expr_ref & r, proof_ref & pr);
 };
 
@@ -180,5 +180,4 @@ public:
 
 typedef der_rewriter der_star; 
 
-#endif /* DER_H_ */
 

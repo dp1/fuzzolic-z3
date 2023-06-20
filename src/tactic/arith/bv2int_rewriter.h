@@ -16,8 +16,7 @@ Author:
 Notes:
 
 --*/
-#ifndef BV2INT_REWRITER_H_
-#define BV2INT_REWRITER_H_
+#pragma once
 
 #include "ast/ast.h"
 #include "ast/rewriter/rewriter.h"
@@ -41,7 +40,7 @@ public:
     void reset() { m_side_conditions.reset(); m_trail.reset(); m_power2.reset(); }
     void add_side_condition(expr* e) { m_side_conditions.push_back(e); }
     unsigned num_side_conditions() const { return m_side_conditions.size(); }
-    expr* const* side_conditions() const { return m_side_conditions.c_ptr(); }
+    expr* const* side_conditions() const { return m_side_conditions.data(); }
     unsigned get_max_num_bits() const { return m_max_size; }
     
     void collect_power2(goal const & s);
@@ -119,4 +118,3 @@ public:
         m_cfg(m, ctx) {}
 };
 
-#endif

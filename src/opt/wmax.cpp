@@ -44,42 +44,35 @@ namespace opt {
         }
 
     public:
-        wmax(maxsat_context& c, weights_t& ws, expr_ref_vector const& soft): 
-            maxsmt_solver_base(c, ws, soft),
+        wmax(maxsat_context& c, vector<soft>& s, unsigned index): 
+            maxsmt_solver_base(c, s, index),
             m_trail(m),
             m_defs(m) {}
-
-        ~wmax() override {}
 
         lbool operator()() override {
             TRACE("opt", tout << "weighted maxsat\n";);
             scoped_ensure_theory wth(*this);
-            obj_map<expr, rational> soft;            
             reset();
-            lbool is_sat = find_mutexes(soft);
-            if (is_sat != l_true) {
-                return is_sat;
-            }
-            m_upper = m_lower;
+            if (init())
+                return l_undef;
+            
+            lbool is_sat = l_true;
+            
             expr_ref_vector asms(m);
             vector<expr_ref_vector> cores;
 
-            obj_map<expr, rational>::iterator it = soft.begin(), end = soft.end();
-            for (; it != end; ++it) {
-                assert_weighted(wth(), it->m_key, it->m_value);
-                if (!is_true(it->m_key)) {
-                    m_upper += it->m_value;
-                }
-            }
+            for (auto const& [k, w, t] : m_soft) 
+                assert_weighted(wth(), k, w);
+            
             wth().init_min_cost(m_upper - m_lower);
             trace_bounds("wmax");
-            
-            TRACE("opt", 
-                  s().display(tout)<< "\n";
-                  tout << "lower: " << m_lower << " upper: " << m_upper << "\n";);
-            while (!m.canceled() && m_lower < m_upper) {
+
+            TRACE("opt",
+                s().display(tout) << "\n";
+            tout << "lower: " << m_lower << " upper: " << m_upper << "\n";);
+            while (m.inc() && m_lower < m_upper) {
                 is_sat = s().check_sat(0, nullptr);
-                if (m.canceled()) {
+                if (!m.inc()) {
                     is_sat = l_undef;
                 }
                 if (is_sat == l_undef) {
@@ -104,9 +97,10 @@ namespace opt {
                 SASSERT(m_lower <= m_upper);
             }
 
-            update_assignment();
-            
-            if (!m.canceled() && is_sat == l_undef && m_lower == m_upper) {
+            if (m_model) 
+                update_assignment();
+        
+            if (m.inc() && is_sat == l_undef && m_lower == m_upper) {
                 is_sat = l_true;
             }
             if (is_sat == l_false) {
@@ -308,8 +302,8 @@ namespace opt {
                 
     };
 
-    maxsmt_solver_base* mk_wmax(maxsat_context& c, weights_t& ws, expr_ref_vector const& soft) {
-        return alloc(wmax, c, ws, soft);
+    maxsmt_solver_base* mk_wmax(maxsat_context& c, vector<soft> & s, unsigned index) {
+        return alloc(wmax, c, s, index);
     }
 
 }

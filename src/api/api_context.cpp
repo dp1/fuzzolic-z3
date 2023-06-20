@@ -18,8 +18,8 @@ Revision History:
 
 --*/
 #include<typeinfo>
-#include "api/api_context.h"
 #include "util/z3_version.h"
+#include "api/api_context.h"
 #include "ast/ast_pp.h"
 #include "ast/ast_ll_pp.h"
 #include "api/api_log_macros.h"
@@ -35,11 +35,12 @@ namespace api {
 
     object::object(context& c): m_ref_count(0), m_context(c) { this->m_id = m_context.add_object(this); }
 
-    void object::inc_ref() { m_ref_count++; }
+    void object::inc_ref() { ++m_ref_count; }
 
-    void object::dec_ref() { SASSERT(m_ref_count > 0); m_ref_count--; if (m_ref_count == 0) m_context.del_object(this); }
+    void object::dec_ref() { SASSERT(m_ref_count > 0); if (--m_ref_count == 0) m_context.del_object(this); }
     
     unsigned context::add_object(api::object* o) {
+        flush_objects();
         unsigned id = m_allocated_objects.size();
         if (!m_free_object_ids.empty()) {
             id = m_free_object_ids.back();
@@ -50,9 +51,54 @@ namespace api {
     }
 
     void context::del_object(api::object* o) {
-        m_free_object_ids.push_back(o->id());
-        m_allocated_objects.remove(o->id());
-        dealloc(o);
+        if (!o)
+            return;
+#ifndef SINGLE_THREAD
+        if (m_concurrent_dec_ref) {
+            lock_guard lock(m_mux);
+            m_objects_to_flush.push_back(o);
+        }
+        else
+#endif
+        {
+            m_free_object_ids.push_back(o->id());
+            m_allocated_objects.remove(o->id());
+            dealloc(o);
+        }
+    }
+
+    void context::dec_ref(ast* a) {
+#ifndef SINGLE_THREAD
+        if (m_concurrent_dec_ref) {
+            lock_guard lock(m_mux);
+            m_asts_to_flush.push_back(a);
+        }
+        else
+#endif
+            m().dec_ref(a);
+    }
+
+    void context::flush_objects() {
+#ifndef SINGLE_THREAD
+        if (!m_concurrent_dec_ref)
+            return;        
+        {
+            lock_guard lock(m_mux);
+            if (m_asts_to_flush.empty() && m_objects_to_flush.empty())
+                return;
+            m_asts_to_flush2.swap(m_asts_to_flush);
+            m_objects_to_flush2.swap(m_objects_to_flush);
+        }
+        for (ast* a : m_asts_to_flush2)
+            m().dec_ref(a);
+        for (auto* o : m_objects_to_flush2) {
+            m_free_object_ids.push_back(o->id());
+            m_allocated_objects.remove(o->id());
+            dealloc(o);
+        }
+        m_objects_to_flush2.reset();
+        m_asts_to_flush2.reset();
+#endif
     }
 
     static void default_error_handler(Z3_context ctx, Z3_error_code c) {
@@ -70,8 +116,8 @@ namespace api {
     //
     // ------------------------
 
-    context::context(context_params * p, bool user_ref_count):
-        m_params(p != nullptr ? *p : context_params()),
+    context::context(ast_context_params * p, bool user_ref_count):
+        m_params(p != nullptr ? *p : ast_context_params()),
         m_user_ref_count(user_ref_count),
         m_manager(m_params.mk_ast_manager()),
         m_plugins(m()),
@@ -81,20 +127,14 @@ namespace api {
         m_fpa_util(m()),
         m_sutil(m()),
         m_recfun(m()),
-        m_last_result(m()),
         m_ast_trail(m()),
         m_pmanager(m_limit) {
 
         m_error_code = Z3_OK;
         m_print_mode = Z3_PRINT_SMTLIB_FULL;
-        m_searching  = false;
         
-
-        m_interruptable = nullptr;
         m_error_handler = &default_error_handler;
 
-        m_basic_fid = m().get_basic_family_id();
-        m_arith_fid = m().mk_family_id("arith");
         m_bv_fid    = m().mk_family_id("bv");
         m_pb_fid    = m().mk_family_id("pb");
         m_array_fid = m().mk_family_id("array");
@@ -102,7 +142,8 @@ namespace api {
         m_datalog_fid = m().mk_family_id("datalog_relation");
         m_fpa_fid   = m().mk_family_id("fpa");
         m_seq_fid   = m().mk_family_id("seq");
-        m_special_relations_fid   = m().mk_family_id("special_relations");
+	    m_char_fid   = m().mk_family_id("char");
+        m_special_relations_fid   = m().mk_family_id("specrels");
         m_dt_plugin = static_cast<datatype_decl_plugin*>(m().get_plugin(m_dt_fid));
     
         install_tactics(*this);
@@ -110,30 +151,35 @@ namespace api {
 
 
     context::~context() {
+        if (m_parser)
+            smt2::free_parser(m_parser);
         m_last_obj = nullptr;
+        flush_objects();
         for (auto& kv : m_allocated_objects) {
             api::object* val = kv.m_value;
-            DEBUG_CODE(warning_msg("Uncollected memory: %d: %s", kv.m_key, typeid(*val).name()););
+            DEBUG_CODE(if (!m_concurrent_dec_ref) warning_msg("Uncollected memory: %d: %s", kv.m_key, typeid(*val).name()););
             dealloc(val);
         }
+        if (m_params.owns_manager())
+            m_manager.detach();
+
     }
 
     context::set_interruptable::set_interruptable(context & ctx, event_handler & i):
         m_ctx(ctx) {
         lock_guard lock(ctx.m_mux);
-        SASSERT(m_ctx.m_interruptable == 0);
-        m_ctx.m_interruptable = &i;        
+        m_ctx.m_interruptable.push_back(& i);
     }
 
     context::set_interruptable::~set_interruptable() {
         lock_guard lock(m_ctx.m_mux);
-        m_ctx.m_interruptable = nullptr;        
+        m_ctx.m_interruptable.pop_back();
     }
 
     void context::interrupt() {
         lock_guard lock(m_mux);
-        if (m_interruptable)
-            (*m_interruptable)(API_INTERRUPT_EH_CALLER);
+        for (auto * eh : m_interruptable)
+            (*eh)(API_INTERRUPT_EH_CALLER);
         m_limit.cancel();
         m().limit().cancel();        
     }
@@ -147,14 +193,12 @@ namespace api {
         }
     }
 
-    void context::reset_error_code() { 
-        m_error_code = Z3_OK; 
-    }
-
-    void context::check_searching() {
-        if (m_searching) { 
-            set_error_code(Z3_INVALID_USAGE, "cannot use function while searching"); // TBD: error code could be fixed.
-        } 
+    void context::set_error_code(Z3_error_code err, std::string &&opt_msg) {
+        m_error_code = err;
+        if (err != Z3_OK) {
+            m_exception_msg = std::move(opt_msg);
+            invoke_error_handler(err);
+        }
     }
 
     char * context::mk_external_string(char const * str) {
@@ -176,7 +220,7 @@ namespace api {
     expr * context::mk_numeral_core(rational const & n, sort * s) {
         expr* e = nullptr;
         family_id fid  = s->get_family_id();
-        if (fid == m_arith_fid) {
+        if (fid == arith_family_id) {
             e = m_arith_util.mk_numeral(n, s);
         }
         else if (fid == m_bv_fid) {
@@ -189,6 +233,11 @@ namespace api {
                 invoke_error_handler(Z3_INVALID_ARG);
             }
             e = m_datalog_util.mk_numeral(n.get_uint64(), s);
+        }
+        else if (fid == m_fpa_fid) {
+            scoped_mpf tmp(fpautil().fm());
+            fpautil().fm().set(tmp, fpautil().get_ebits(s), fpautil().get_sbits(s), n.get_double());
+            e = fpautil().mk_value(tmp);
         }
         else {
             invoke_error_handler(Z3_INVALID_ARG);
@@ -215,12 +264,12 @@ namespace api {
     void context::save_ast_trail(ast * n) {
         SASSERT(m().contains(n));
         if (m_user_ref_count) {
-            // Corner case bug: n may be in m_last_result, and this is the only reference to n.
+            // Corner case bug: n may be in m_ast_trail, and this is the only reference to n.
             // When, we execute reset() it is deleted
-            // To avoid this bug, I bump the reference counter before resetting m_last_result
+            // To avoid this bug, I bump the reference counter before resetting m_ast_trail
             ast_ref node(n, m());
-            m_last_result.reset();
-            m_last_result.push_back(std::move(node));
+            m_ast_trail.reset();
+            m_ast_trail.push_back(std::move(node));
         }
         else {
             m_ast_trail.push_back(n);
@@ -228,15 +277,12 @@ namespace api {
     }
 
     void context::save_multiple_ast_trail(ast * n) {
-        if (m_user_ref_count)
-            m_last_result.push_back(n);
-        else
-            m_ast_trail.push_back(n);
+        m_ast_trail.push_back(n);
     }
 
     void context::reset_last_result() {
         if (m_user_ref_count)
-            m_last_result.reset();
+            m_ast_trail.reset();
         m_last_obj = nullptr;
     }
 
@@ -271,10 +317,8 @@ namespace api {
     
     void context::invoke_error_handler(Z3_error_code c) {
         if (m_error_handler) {
-            if (g_z3_log) {
-                // error handler can do crazy stuff such as longjmp
-                g_z3_log_enabled = true;
-            }
+            // error handler can do crazy stuff such as longjmp
+            ctx_enable_logging();
             m_error_handler(reinterpret_cast<Z3_context>(this), c);
         }
     }
@@ -289,9 +333,10 @@ namespace api {
                 if (a->get_num_args() > 1) buffer << "\n";
                 for (unsigned i = 0; i < a->get_num_args(); ++i) {
                     buffer << mk_bounded_pp(a->get_arg(i), m(), 3) << " of sort ";
-                    buffer << mk_pp(m().get_sort(a->get_arg(i)), m()) << "\n";
+                    buffer << mk_pp(a->get_arg(i)->get_sort(), m()) << "\n";
                 }
-                warning_msg("%s",buffer.str().c_str());
+                auto str = buffer.str();
+                warning_msg("%s", str.c_str());
                 break;
             }
             case AST_VAR:
@@ -331,7 +376,7 @@ extern "C" {
         Z3_TRY;
         LOG_Z3_mk_context(c);
         memory::initialize(UINT_MAX);
-        Z3_context r = reinterpret_cast<Z3_context>(alloc(api::context, reinterpret_cast<context_params*>(c), false));
+        Z3_context r = reinterpret_cast<Z3_context>(alloc(api::context, reinterpret_cast<ast_context_params*>(c), false));
         RETURN_Z3(r);
         Z3_CATCH_RETURN_NO_HANDLE(nullptr);
     }
@@ -340,7 +385,7 @@ extern "C" {
         Z3_TRY;
         LOG_Z3_mk_context_rc(c);
         memory::initialize(UINT_MAX);
-        Z3_context r = reinterpret_cast<Z3_context>(alloc(api::context, reinterpret_cast<context_params*>(c), true));
+        Z3_context r = reinterpret_cast<Z3_context>(alloc(api::context, reinterpret_cast<ast_context_params*>(c), true));
         RETURN_Z3(r);
         Z3_CATCH_RETURN_NO_HANDLE(nullptr);
     }
@@ -360,6 +405,13 @@ extern "C" {
         Z3_CATCH;
     }
 
+    void Z3_API Z3_enable_concurrent_dec_ref(Z3_context c) {
+        Z3_TRY;
+        LOG_Z3_enable_concurrent_dec_ref(c);
+        mk_c(c)->enable_concurrent_dec_ref();
+        Z3_CATCH;
+    }    
+
     void Z3_API Z3_toggle_warning_messages(bool enabled) {
         LOG_Z3_toggle_warning_messages(enabled);
         enable_warning_messages(enabled != 0);
@@ -369,6 +421,7 @@ extern "C" {
         Z3_TRY;
         LOG_Z3_inc_ref(c, a);
         RESET_ERROR_CODE();
+        mk_c(c)->flush_objects();
         mk_c(c)->m().inc_ref(to_ast(a));
         Z3_CATCH;
     }
@@ -376,13 +429,14 @@ extern "C" {
     void Z3_API Z3_dec_ref(Z3_context c, Z3_ast a) {
         Z3_TRY;
         LOG_Z3_dec_ref(c, a);
-        RESET_ERROR_CODE();
         if (a && to_ast(a)->get_ref_count() == 0) {
+            // the error is unchecked (but should not happen) in GC'ed wrappers
+            RESET_ERROR_CODE();
             SET_ERROR_CODE(Z3_DEC_REF_ERROR, nullptr);
             return;
         }
         if (a) {
-            mk_c(c)->m().dec_ref(to_ast(a));
+            mk_c(c)->dec_ref(to_ast(a));
         }
         Z3_CATCH;
     }
@@ -419,13 +473,13 @@ extern "C" {
 
     void Z3_API Z3_reset_memory(void) {
         LOG_Z3_reset_memory();
-        memory::finalize();
+        memory::finalize(false);
         memory::initialize(0);
     }
 
     void Z3_API Z3_finalize_memory(void) {
         LOG_Z3_finalize_memory();
-        memory::finalize();
+        memory::finalize(true);
     }
 
     Z3_error_code Z3_API Z3_get_error_code(Z3_context c) {

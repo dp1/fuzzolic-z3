@@ -208,7 +208,7 @@ namespace sat {
     }
 
     void model_converter::add_elim_stack(entry & e) {
-        e.m_elim_stack.push_back(stackv().empty() ? nullptr : alloc(elim_stack, stackv()));
+        e.m_elim_stack.push_back(stackv().empty() ? nullptr : alloc(elim_stack, std::move(m_elim_stack)));
         // VERIFY(for (auto const& s : stackv()) VERIFY(legal_to_flip(s.second.var())););
         stackv().reset();
     }
@@ -221,7 +221,6 @@ namespace sat {
     void model_converter::set_clause(entry & e, clause const & c) {
         e.m_clause.append(c.size(), c.begin());
     }
-
 
     void model_converter::insert(entry & e, clause const & c) {
         SASSERT(c.contains(e.var()));
@@ -345,7 +344,7 @@ namespace sat {
     void model_converter::flush(model_converter & src) {
         VERIFY(this != &src);
         m_entries.append(src.m_entries);
-        m_exposed_lim = src.m_exposed_lim;
+        m_exposed_lim += src.m_exposed_lim;
         src.m_entries.reset();
         src.m_exposed_lim = 0;
     }
@@ -396,7 +395,7 @@ namespace sat {
                             unsigned csz = p.first;
                             literal lit = p.second;
                             swap(lit.var(), csz, clause);
-                            update_stack.append(csz, clause.c_ptr());
+                            update_stack.append(csz, clause.data());
                             update_stack.push_back(null_literal);
                         }
                     }

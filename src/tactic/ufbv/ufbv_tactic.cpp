@@ -23,7 +23,7 @@ Notes:
 #include "tactic/core/distribute_forall_tactic.h"
 #include "tactic/core/der_tactic.h"
 #include "tactic/core/reduce_args_tactic.h"
-#include "smt/tactic/smt_tactic.h"
+#include "tactic/smtlogics/smt_tactic.h"
 #include "tactic/core/nnf_tactic.h"
 #include "tactic/ufbv/macro_finder_tactic.h"
 #include "tactic/ufbv/ufbv_rewriter_tactic.h"
@@ -32,7 +32,7 @@ Notes:
 
 
 static tactic * mk_der_fp_tactic(ast_manager & m, params_ref const & p) {
-    return repeat(and_then(mk_der_tactic(m), mk_simplify_tactic(m, p)));
+    return repeat(and_then(mk_der_tactic(m), mk_simplify_tactic(m, p)), 5);
 }
 
 static tactic * mk_ufbv_preprocessor_tactic(ast_manager & m, params_ref const & p) {

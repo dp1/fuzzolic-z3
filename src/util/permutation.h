@@ -16,10 +16,9 @@ Author:
 Revision History:
 
 --*/
-#ifndef PERMUTATION_H_
-#define PERMUTATION_H_
+#pragma once
 
-#include<iostream>
+#include<ostream>
 #include "util/vector.h"
 
 class permutation {
@@ -90,4 +89,3 @@ void apply_permutation(unsigned sz, T * data, unsigned const * p) {
     }
 }
 
-#endif

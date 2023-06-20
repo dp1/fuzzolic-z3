@@ -25,8 +25,8 @@ Revision History:
 #include "sat/dimacs.h"
 #include "sat/sat_params.hpp"
 #include "sat/sat_solver.h"
-#include "sat/ba_solver.h"
 #include "sat/tactic/goal2sat.h"
+#include "sat/tactic/sat2goal.h"
 #include "ast/reg_decl_plugins.h"
 #include "tactic/tactic.h"
 #include "tactic/fd_solver/fd_solver.h"
@@ -56,7 +56,7 @@ static void display_statistics() {
 
 static void on_timeout() {
     display_statistics();
-    exit(0);
+    _Exit(0);
 }
 
 static void STD_CALL on_ctrl_c(int) {
@@ -67,6 +67,7 @@ static void STD_CALL on_ctrl_c(int) {
 
 static void display_model(sat::solver const & s) {
     sat::model const & m = s.get_model();
+    std::cout << "v ";
     for (unsigned i = 1; i < m.size(); i++) {
         switch (m[i]) {
         case l_false: std::cout << "-" << i << " ";  break;
@@ -74,11 +75,11 @@ static void display_model(sat::solver const & s) {
         case l_true: std::cout << i << " ";  break;
         }
     }
-    std::cout << "\n";
+    std::cout << "0\n";
 }
 
 static void display_core(sat::solver const& s, vector<sat::literal_vector> const& tracking_clauses) {
-    std::cout << "core\n";
+    std::cout << "v core\n";
     sat::literal_vector const& c = s.get_core();
     for (unsigned i = 0; i < c.size(); ++i) {
         sat::literal_vector const& cls = tracking_clauses[c[i].var()];
@@ -96,7 +97,7 @@ static void track_clause(sat::solver& dst,
     sat::literal lit = sat::literal(dst.mk_var(true, false), false);
     tracking_clauses.set(lit.var(), lits);
     lits.push_back(~lit);
-    dst.mk_clause(lits.size(), lits.c_ptr());
+    dst.mk_clause(lits.size(), lits.data());
     assumptions.push_back(lit);            
 }
 
@@ -225,12 +226,10 @@ unsigned read_dimacs(char const * file_name) {
     params_ref p = gparams::get_module("sat");
     params_ref par = gparams::get_module("parallel");
     p.set_bool("produce_models", true);
+    p.set_bool("cardinality.solver", false);
     sat_params sp(p);
     reslimit limit;
     sat::solver solver(p, limit);
-    if (sp.xor_solver()) {
-        solver.set_extension(alloc(sat::ba_solver));
-    }
     g_solver = &solver;
 
     if (file_name) {
@@ -251,13 +250,13 @@ unsigned read_dimacs(char const * file_name) {
     params_ref p2;
     p2.copy(p);
     p2.set_sym("drat.file", symbol::null);
-    
+
     sat::solver solver2(p2, limit);
     if (p.get_bool("dimacs.core", false)) {
         g_solver = &solver2;        
         sat::literal_vector assumptions;
         track_clauses(solver, solver2, assumptions, tracking_clauses);
-        r = g_solver->check(assumptions.size(), assumptions.c_ptr());
+        r = g_solver->check(assumptions.size(), assumptions.data());
     }
     else if (par.get_bool("enable", false)) {
         r = solve_parallel(solver);
@@ -267,15 +266,15 @@ unsigned read_dimacs(char const * file_name) {
     }
     switch (r) {
     case l_true: 
-        std::cout << "sat\n"; 
+        std::cout << "s SATISFIABLE\n"; 
         if (file_name && gparams::get_ref().get_bool("model_validate", false)) verify_solution(file_name);
         display_model(*g_solver);
         break;
     case l_undef: 
-        std::cout << "unknown\n"; 
+        std::cout << "s UNKNOWN\n"; 
         break;
     case l_false: 
-        std::cout << "unsat\n"; 
+        std::cout << "s UNSATISFIABLE\n"; 
         if (p.get_bool("dimacs.core", false)) {
             display_core(*g_solver, tracking_clauses);
         }

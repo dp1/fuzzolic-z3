@@ -13,6 +13,13 @@ find_package(Z3
   # use this option.
   NO_DEFAULT_PATH
 )
+
+################################################################################
+# Z3 C++ API bindings require C++11
+################################################################################
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 message(STATUS "Z3_FOUND: ${Z3_FOUND}")
 message(STATUS "Found Z3 ${Z3_VERSION_STRING}")
 message(STATUS "Z3_DIR: ${Z3_DIR}")
@@ -21,7 +28,7 @@ add_executable(z3_tptp5 tptp5.cpp tptp5.lex.cpp)
 target_include_directories(z3_tptp5 PRIVATE ${Z3_CXX_INCLUDE_DIRS})
 target_link_libraries(z3_tptp5 PRIVATE ${Z3_LIBRARIES})
 
-if ("${CMAKE_SYSTEM_NAME}" MATCHES "[Ww]indows")
+if (CMAKE_SYSTEM_NAME MATCHES "[Ww]indows")
   # On Windows we need to copy the Z3 libraries
   # into the same directory as the executable
   # so that they can be found.

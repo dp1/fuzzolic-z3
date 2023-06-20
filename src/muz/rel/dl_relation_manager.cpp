@@ -105,14 +105,22 @@ namespace datalog {
 
     void relation_manager::store_relation(func_decl * pred, relation_base * rel) {
         SASSERT(rel);
-        relation_map::obj_map_entry * e = m_relations.insert_if_not_there2(pred, 0);
-        if (e->get_data().m_value) {
-            e->get_data().m_value->deallocate();
+        auto& value = m_relations.insert_if_not_there(pred, 0);
+        if (value) {
+            value->deallocate();
         }
         else {
             get_context().get_manager().inc_ref(pred); //dec_ref in reset
         }
-        e->get_data().m_value = rel;
+        value = rel;
+    }
+
+    decl_set relation_manager::collect_predicates() const {
+        decl_set res;
+        for (auto const& kv : m_relations) {
+            res.insert(kv.m_key);
+        }
+        return res;
     }
 
     void relation_manager::collect_non_empty_predicates(decl_set & res) const {
@@ -605,7 +613,7 @@ namespace datalog {
             (*m_filter)(*t1);
             if( !m_project) {
                 relation_manager & rmgr = t1->get_plugin().get_manager();
-                m_project = rmgr.mk_project_fn(*t1, m_removed_cols.size(), m_removed_cols.c_ptr());
+                m_project = rmgr.mk_project_fn(*t1, m_removed_cols.size(), m_removed_cols.data());
                 if (!m_project) {
                     throw default_exception("projection does not exist");
                 }
@@ -677,7 +685,7 @@ namespace datalog {
             scoped_rel<relation_base> aux = (*m_join)(t1, t2);
             if(!m_project) {
                 relation_manager & rmgr = aux->get_plugin().get_manager();
-                m_project = rmgr.mk_project_fn(*aux, m_removed_cols.size(), m_removed_cols.c_ptr());
+                m_project = rmgr.mk_project_fn(*aux, m_removed_cols.size(), m_removed_cols.data());
                 if(!m_project) {
                     throw default_exception("projection does not exist");
                 }
@@ -834,7 +842,7 @@ namespace datalog {
         unsigned_vector join_removed_cols;
         add_sequence(tgt.get_signature().size(), src.get_signature().size(), join_removed_cols);
         scoped_rel<relation_join_fn> join_fun = mk_join_project_fn(tgt, src, joined_col_cnt, tgt_cols, src_cols,
-            join_removed_cols.size(), join_removed_cols.c_ptr(), false);
+            join_removed_cols.size(), join_removed_cols.data(), false);
         if(!join_fun) {
             return nullptr;
         }
@@ -991,7 +999,7 @@ namespace datalog {
     class relation_manager::auxiliary_table_transformer_fn {
         table_fact m_row;
     public:
-        virtual ~auxiliary_table_transformer_fn() {}
+        virtual ~auxiliary_table_transformer_fn() = default;
         virtual const table_signature & get_result_signature() const = 0;
         virtual void modify_fact(table_fact & f) const = 0;
 
@@ -1092,7 +1100,7 @@ namespace datalog {
                 if(get_result_signature().functional_columns()!=0) {
                     //to preserve functional columns we need to do the project_with_reduction
                     unreachable_reducer * reducer = alloc(unreachable_reducer);
-                    m_project = rmgr.mk_project_with_reduce_fn(*aux, m_removed_cols.size(), m_removed_cols.c_ptr(), reducer);
+                    m_project = rmgr.mk_project_with_reduce_fn(*aux, m_removed_cols.size(), m_removed_cols.data(), reducer);
                 }
                 else {
                     m_project = rmgr.mk_project_fn(*aux, m_removed_cols);
@@ -1141,7 +1149,7 @@ namespace datalog {
         }
 
         void modify_fact(table_fact & f) const override {
-            permutate_by_cycle(f, m_cycle);
+            permute_by_cycle(f, m_cycle);
         }
 
         table_base * operator()(const table_base & t) override {
@@ -1222,18 +1230,18 @@ namespace datalog {
 
 
     /**
-       An auixiliary class for functors that perform filtering. It performs the table traversal
+       An auxiliary class for functors that perform filtering. It performs the table traversal
        and only asks for each individual row whether it should be removed.
 
        When using this class in multiple inheritance, this class should not be inherited publicly
-       and should be mentioned as last. This should ensure that deteletion of the object will
+       and should be mentioned as last. This should ensure that deletion of the object will
        go well when initiated from a pointer to the first ancestor.
     */
     class relation_manager::auxiliary_table_filter_fn {
         table_fact m_row;
         svector<table_element> m_to_remove;
     public:
-        virtual ~auxiliary_table_filter_fn() {}
+        virtual ~auxiliary_table_filter_fn() = default;
         virtual bool should_remove(const table_fact & f) const = 0;
 
         void operator()(table_base & r) {
@@ -1242,11 +1250,11 @@ namespace datalog {
             for (table_base::row_interface& a : r) {
                 a.get_fact(m_row);
                 if (should_remove(m_row)) {
-                    m_to_remove.append(m_row.size(), m_row.c_ptr());
+                    m_to_remove.append(m_row.size(), m_row.data());
                     ++sz;
                 }
             }
-            r.remove_facts(sz, m_to_remove.c_ptr());
+            r.remove_facts(sz, m_to_remove.data());
         }
     };
 
@@ -1367,7 +1375,7 @@ namespace datalog {
         th_rewriter & m_simp;
         app_ref m_condition;
         expr_free_vars m_free_vars;
-        expr_ref_vector m_args;
+        mutable expr_ref_vector m_args;
     public:
         default_table_filter_interpreted_fn(context & ctx, unsigned col_cnt,  app* condition) 
                 : m_ast_manager(ctx.get_manager()),
@@ -1380,13 +1388,13 @@ namespace datalog {
         }
 
         bool should_remove(const table_fact & f) const override {
-            expr_ref_vector& args = const_cast<expr_ref_vector&>(m_args);
+            expr_ref_vector& args = m_args;
 
             args.reset();
             //arguments need to be in reverse order for the substitution
             unsigned col_cnt = f.size();
-            for(int i=col_cnt-1;i>=0;i--) {
-                if(!m_free_vars.contains(i)) {
+            for(int i = col_cnt; i-- > 0;) {
+                if (!m_free_vars.contains(i)) {
                     args.push_back(nullptr);
                     continue; //this variable does not occur in the condition;
                 }
@@ -1395,7 +1403,7 @@ namespace datalog {
                 args.push_back(m_decl_util.mk_numeral(el, m_free_vars[i]));
             }
 
-            expr_ref ground = m_vs(m_condition.get(), args.size(), args.c_ptr());
+            expr_ref ground = m_vs(m_condition.get(), args);
             m_simp(ground);
 
             return m_ast_manager.is_false(ground);
@@ -1436,7 +1444,7 @@ namespace datalog {
             (*m_filter)(*t2);
             if (!m_project) {
                 relation_manager & rmgr = t2->get_plugin().get_manager();
-                m_project = rmgr.mk_project_fn(*t2, m_removed_cols.size(), m_removed_cols.c_ptr());
+                m_project = rmgr.mk_project_fn(*t2, m_removed_cols.size(), m_removed_cols.data());
                 if (!m_project) {
                     throw default_exception("projection does not exist");
                 }
@@ -1581,8 +1589,6 @@ namespace datalog {
             m_union_fn = plugin.mk_union_fn(t, *m_aux_table, static_cast<table_base *>(nullptr));
         }
 
-        ~default_table_map_fn() override {}
-
         void operator()(table_base & t) override {
             SASSERT(t.get_signature()==m_aux_table->get_signature());
             if(!m_aux_table->empty()) {
@@ -1591,7 +1597,7 @@ namespace datalog {
 
             for (table_base::row_interface& a : t) {
                 a.get_fact(m_curr_fact);
-                if((*m_mapper)(m_curr_fact.c_ptr()+m_first_functional)) {
+                if((*m_mapper)(m_curr_fact.data()+m_first_functional)) {
                     m_aux_table->add_fact(m_curr_fact);
                 }
             }
@@ -1636,8 +1642,6 @@ namespace datalog {
             m_former_row.resize(get_result_signature().size());
         }
 
-        ~default_table_project_with_reduce_fn() override {}
-
         virtual void modify_fact(table_fact & f) const {
             unsigned ofs=1;
             unsigned r_i=1;
@@ -1675,7 +1679,7 @@ namespace datalog {
             for (; it != end; ++it) {
                 mk_project(it);
                 if (!res->suggest_fact(m_former_row)) {
-                    (*m_reducer)(m_former_row.c_ptr()+m_res_first_functional, m_row.c_ptr()+m_res_first_functional);
+                    (*m_reducer)(m_former_row.data()+m_res_first_functional, m_row.data()+m_res_first_functional);
                     res->ensure_fact(m_former_row);
                 }
             }

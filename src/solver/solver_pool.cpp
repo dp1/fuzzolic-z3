@@ -68,6 +68,10 @@ public:
     }
 
     solver* base_solver() { return m_base.get(); }
+    void set_phase(expr* e) override { m_base->set_phase(e); }
+    phase* get_phase() override { return m_base->get_phase(); }
+    void set_phase(phase* p) override { m_base->set_phase(p); }
+    void move_to_front(expr* e) override { m_base->move_to_front(e); }
 
     solver* translate(ast_manager& m, params_ref const& p) override { UNREACHABLE(); return nullptr; }
     void updt_params(params_ref const& p) override {
@@ -98,10 +102,10 @@ public:
     }
 
 
-    proof * get_proof() override {
+    proof * get_proof_core() override {
         scoped_watch _t_(m_pool.m_proof_watch);
         if (!m_proof.get()) {
-            m_proof = m_base->get_proof();
+            m_proof = m_base->get_proof_core();
             if (m_proof) {
                 elim_aux_assertions pc(m_pred);
                 pc(m, m_proof, m_proof);
@@ -123,8 +127,8 @@ public:
         m_base->get_levels(vars, depth);
     }
 
-    expr_ref_vector get_trail() override {
-        return m_base->get_trail();
+    expr_ref_vector get_trail(unsigned max_level) override {
+        return m_base->get_trail(max_level);
     }
 
     lbool check_sat_core2(unsigned num_assumptions, expr * const * assumptions) override {
@@ -258,6 +262,9 @@ public:
 
     expr_ref_vector cube(expr_ref_vector& vars, unsigned ) override { return expr_ref_vector(m); }
 
+    expr* congruence_next(expr* e) override { return e; }
+    expr* congruence_root(expr* e) override { return e; }
+
     ast_manager& get_manager() const override { return m_base->get_manager(); }
 
     void refresh(solver* new_base) {
@@ -279,13 +286,14 @@ private:
                         lbool last_status, double last_time) {
         std::string file_name = mk_file_name();
         std::ofstream out(file_name);
+        STRACE("spacer.ind_gen", tout << "Dumping benchmark to " << file_name << "\n";);
         if (!out) {
             IF_VERBOSE(0, verbose_stream() << "could not open file " << file_name << " for output\n");
             return;
         }
 
         out << "(set-info :status " << lbool2status(last_status) << ")\n";
-        m_base->display(out, cube.size(), cube.c_ptr());
+        m_base->display(out, cube.size(), cube.data());
         for (auto const& clause : clauses) {
             out << ";; extra clause\n";
             out << "(assert (or ";
@@ -294,7 +302,7 @@ private:
         }
 
         out << "(check-sat";
-        for (auto * lit : cube) out << " " << mk_pp(lit, m);
+        for (auto * lit : cube) out << " " << mk_pp(lit, m) << "\n";
         out << ")\n";
 
         out << "(exit)\n";
@@ -302,6 +310,7 @@ private:
         m_base->collect_statistics(st);
         st.update("time", last_time);
         st.display_smt2(out);
+        m_base->get_params().display(out);
         out.close();
     }
 
@@ -393,7 +402,7 @@ solver* solver_pool::mk_solver() {
     }
     std::stringstream name;
     name << "vsolver#" << m_solvers.size();
-    app_ref pred(m.mk_const(symbol(name.str().c_str()), m.mk_bool_sort()), m);
+    app_ref pred(m.mk_const(symbol(name.str()), m.mk_bool_sort()), m);
     pool_solver* solver = alloc(pool_solver, base_solver.get(), *this, pred);
     m_solvers.push_back(solver);
     return solver;

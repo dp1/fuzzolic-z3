@@ -18,6 +18,7 @@ Revision History:
 #include "model/model_v2_pp.h"
 #include "model/model_core.h"
 #include "ast/ast_pp.h"
+#include <iostream>
 
 static void display_function(std::ostream & out, model_core const & md, func_decl * f, bool partial) {
     ast_manager & m = md.get_manager();
@@ -40,7 +41,7 @@ static void display_function(std::ostream & out, model_core const & md, func_dec
         out << "\n";
     }
     if (partial) {
-        out << else_str << "#unspecified\n";
+        out << else_str << "...\n";
     }
     else {
         expr * else_val = g->get_else();
@@ -56,10 +57,8 @@ static void display_function(std::ostream & out, model_core const & md, func_dec
 
 static void display_functions(std::ostream & out, model_core const & md, bool partial) {
     unsigned sz = md.get_num_functions();
-    for (unsigned i = 0; i < sz; i++) {
-        func_decl * f = md.get_function(i);
-        display_function(out, md, f, partial);
-    }
+    for (unsigned i = 0; i < sz; i++) 
+        display_function(out, md, md.get_function(i), partial);
 }
 
 static void display_constants(std::ostream & out, model_core const & md) {

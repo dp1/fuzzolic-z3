@@ -18,11 +18,10 @@ Revision History:
 
 --*/
 
-#ifndef QE_QSAT_H__
-#define QE_QSAT_H__
+#pragma once
 
 #include "tactic/tactic.h"
-#include "tactic/generic_model_converter.h"
+#include "ast/converters/generic_model_converter.h"
 #include "qe/qe_mbp.h"
 
 namespace qe {
@@ -97,7 +96,9 @@ namespace qe {
         void push();
         void pop(unsigned num_scopes);
         void insert(app* a, max_level const& lvl);
+        void insert_var(app* v, max_level const& lvl);
         void get_assumptions(model* mdl, expr_ref_vector& asms);
+        void ensure_expr_level(app* v, unsigned lvl);
         void set_expr_level(app* v, max_level const& lvl);
         void set_decl_level(func_decl* v, max_level const& lvl);
         void abstract_atoms(expr* fml, max_level& level, expr_ref_vector& defs);
@@ -146,4 +147,3 @@ tactic * mk_qe_rec_tactic(ast_manager & m, params_ref const& p = params_ref());
 
 */
 
-#endif 
