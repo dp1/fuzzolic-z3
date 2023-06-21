@@ -371,7 +371,7 @@ extern "C" {
 #define INTERNAL_MUL    0
 
 #include <stdlib.h>
-#include <x86intrin.h>
+#include <immintrin.h>
 
 #if USE_CACHE
 #include "util/chashtable.h"
