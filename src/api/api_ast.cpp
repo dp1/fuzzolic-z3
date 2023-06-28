@@ -992,6 +992,8 @@ static cache_t cache;
         return res;
     }
 
+    static uint64_t Z3_custom_eval_do_select(Z3_context c, Z3_ast _expr, uint64_t* data, uint8_t* symbols_sizes, size_t data_size);
+
     static uint64_t Z3_custom_eval_internal(Z3_context c, Z3_ast _expr, uint64_t* data, uint8_t* symbols_sizes, size_t data_size) {
 
         // print_z3_original(c, _expr);
@@ -1701,6 +1703,17 @@ static cache_t cache;
                 }
             }
 
+        } else if (mk_c(c)->get_array_fid() == fid) {
+            switch(_decl_kind) {
+                case OP_SELECT: {
+                    return Z3_custom_eval_do_select(c, _expr, data, symbols_sizes, data_size);
+                }
+                // case OP_CONST_ARRAY: return Z3_OP_CONST_ARRAY; // TODO maybe we need to support this one.
+                default: {
+                    print_z3_original(c, _expr);
+                    ERROR("Unknown Array operator");
+                }
+            }
         }
 #if 0
         else if (mk_c(c)->get_arith_fid() == fid) {
@@ -1745,6 +1758,75 @@ static cache_t cache;
         print_z3_original(c, _expr);
         printf("_decl_kind: %d fid=%d\n", _decl_kind, fid);
         ERROR("Unknown operator");
+    }
+
+#define ARRAY_SYMBOL_OFFSET 1000000000
+
+    // Evaluation of a Select expression. This is kept as a separate function to have it show
+    // up separately when profiling.
+    // TODO: this might be slow. The indices and values get cached, but we still need to
+    // traverse a chain of nested Stores.
+    static uint64_t Z3_custom_eval_do_select(Z3_context c, Z3_ast _expr, uint64_t* data, uint8_t* symbols_sizes, size_t data_size) {
+        uint64_t arg1;
+        uint64_t expr_id = to_expr(_expr)->get_id();
+
+        register expr * const * args = ARGS(_expr);
+        uint64_t select_index = EVAL_ARG(args, 1);
+        expr* array = args[0];
+
+        while(1) {
+            func_decl *decl = APP(of_ast(array))->get_decl();
+            func_decl_info *info = decl->get_info();
+
+            if(info == nullptr) {
+                int idx = decl->get_name().get_num();
+                if(idx < ARRAY_SYMBOL_OFFSET) {
+                    ERROR("Invalid array symbol number");
+                }
+                idx -= ARRAY_SYMBOL_OFFSET;
+
+                // fprintf(stderr, "Reading from array %d\n", idx);
+
+                if(idx == 0) {
+                    // The first array is the "input" array, with the input bytes as elements
+                    // TODO bound checks
+                    arg1 = data[select_index] & MASK(SIZE(_expr));
+                } else {
+                    ERROR("Constant arrays are't implemented yet");
+                }
+    #if USE_CACHE
+                cache.insert(expr_id, arg1);
+    #endif
+                return arg1;
+            } else {
+                args = APP(array)->get_args();
+
+                family_id fid = info->get_family_id();
+                decl_kind kind = info->get_decl_kind();
+
+                if(fid != mk_c(c)->get_array_fid() || kind != OP_STORE) {
+                    fprintf(stderr, "fid: %d, kind: %d\n", fid, kind);
+                    ERROR("Invalid operation when looking for a OP_STORE");
+                }
+
+                uint64_t store_index = EVAL_ARG(args, 1);
+
+                if(store_index == select_index) {
+                    // Select(Store(arr, i, v), i) = v
+                    arg1 = EVAL_ARG(args, 2);
+    #if USE_CACHE
+                    cache.insert(expr_id, arg1);
+    #endif
+                    return arg1;
+                } else {
+                    // Index didn't match, continue to go down the chain
+                    // Select(Store(arr, i, v), j) = Select(arr, j)
+                    array = args[0];
+                }
+            }
+        }
+
+        ERROR("unreachable");
     }
 
     uint64_t Z3_API Z3_custom_eval(Z3_context c, Z3_ast expr, uint64_t* data, uint8_t* symbols_sizes, size_t data_size) {
